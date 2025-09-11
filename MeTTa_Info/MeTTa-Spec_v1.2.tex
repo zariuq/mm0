@@ -1,0 +1,4587 @@
+\documentclass{article}
+\usepackage{listings}
+\usepackage{verbatim}
+\usepackage{amsmath,amssymb, amsthm}
+\usepackage{stmaryrd}
+\usepackage{url}
+\usepackage{mathtools}
+\usepackage{float}
+
+\newtheorem{theorem}{Theorem}
+
+% choose one of these emit styles
+\newcommand{\emit}[2]{\operatorname{emit}\!\left(#1,#2\right)}
+% or: \newcommand{\emit}[2]{\mathsf{emit}\!\left(#1,#2\right)}
+% or: \newcommand{\emit}[2]{\mathtt{emit}\!\left(#1,#2\right)}
+
+% make "for" an operator (math roman, proper spacing)
+\newcommand{\For}[1]{\operatorname{for}\!\left(#1\right)}
+
+\lstset{
+  basicstyle=\ttfamily,
+  breaklines=true,
+  frame=single
+}
+
+\begin{document}
+
+\title{MeTTa Formal Specification: Draft}
+\author{Ben Goertzel}
+\date{\today}
+\maketitle
+
+\begin{abstract}
+This document provides a formal specification of the MeTTa programming language. The aim is to define a simple
+but precise grammar for MeTTa, together with a compact small-step
+operational semantics that matches actual practice and supports
+transpilation into MeTTa-IL, a graph-structured lambda-theoretic
+intermediate language. By capturing both the syntactic surface and the
+runtime dynamics, the specification aims to enable independent
+implementations, formal reasoning about programs, and correct-by-
+construction compilation pipelines. The presentation is self-contained
+and illustrated with detailed worked examples including recursive
+functions, Python interoperation, algebraic data types, and a chess
+queens solver, all translated into MeTTa-IL. Our goal is to furnish the
+MeTTa community with a standard reference that plays a role similar to
+the JVM specification or the Ethereum Yellow Paper, ensuring semantic
+clarity and portability across implementations.
+
+{\bf This document is a first effort and may have omissions or errors and is in need of some checking and perhaps correction by the MeTTa development community.}
+\end{abstract}
+
+\tableofcontents
+
+\subsection*{Note on Authorship}
+
+{\small While this document was put together by Ben Goertzel, and it is Ben (and/or the LLMs he used to help, or the demons who may or may not have possessed his brain at any given point in our collectively-hallucinated time axis!) to whom any errors here should be attributed ... the actual programming languages documented here are the work of a group of people -- most notably Alexey Potapov and Vitaly Bogdanov who conceived the original MeTTa concept collaboratively with me, and then invented and  led implementation of the first version of MeTTa (Hyperon Experimental), and then Greg Meredith and Mike Stay who invented and implemented MeTTa-IL (and Greg also suggested a number of important MeTTa language features) ... Adam Vandervorst, Luke Peterson and Jonathan Warrell for help refining and implementing the MeTTA concept and details in various ways ... (and apologies to any of my super-important colleagues whom I have omitted to mention here while typing late at night on insufficient sleep!) ...  and a whole bunch of AI developers in the Hyperon and SingularityNET and F1R3FLY orbit who have been coding in MeTTa and related languages, or in some cases building infrastructural tools for MeTTa, thus allowing us to make progress on understanding what MeTTa is supposed to be.}
+
+\section{Introduction}
+
+MeTTa \footnote{Originally a pseudo-acronym for "Meta Type Talk", though I've come to prefer "Meta Type Theory Assembler" which ChatGPT hallucinated for me one day -- take your pick or make up something new!} is designed as a foundational
+language for programming intelligent systems, developed in the context
+of the Hyperon and SingularityNET projects \cite{Goertzel2023Hyperon}. Its surface syntax is
+minimal, consisting of fully parenthesized S-expressions augmented with
+a small set of special forms. The semantics of the language are defined
+by equations, unification, and rewriting, in a style reminiscent of
+logic programming but extended with higher-order functions,
+nondeterminism, and reflection. MeTTa is intended to be simultaneously simple for
+human programmers and expressive enough to serve as a substrate for
+advanced AGI applications.
+
+This document presents a formal specification of MeTTa. In particular,
+we provide:
+\begin{itemize}
+\item A complete surface grammar expressed in EBNF, capturing the
+lexical structure, patterns, type expressions, and designated special
+forms.
+\item A compact small-step operational semantics based on a
+four-register abstract machine (input, knowledge base, workspace,
+output), adapted from the Meta-MeTTa specification \cite{MetaMeTTa} (and inspired
+also in some places by the MeTTa calculus \cite{metta-calculus})
+\item A mapping of these rules to MeTTa-IL \cite{MettaCycle}, a graph-structured
+lambda-theoretic intermediate representation that enables reasoning
+about correctness and supports efficient compilation to multiple
+execution backends.
+\item Worked examples demonstrating the syntax, semantics, and IL
+translation for a variety of MeTTa programs.
+\end{itemize}
+
+By spelling out both syntax and semantics in this way, we make possible
+independent, compliant implementations of MeTTa, as well as
+meta-theoretic analysis of programs and compilation schemes. The
+specification is intended to support correct-by-construction
+development, reduce ambiguity in program meaning, and provide a stable
+foundation for future extensions of the language. 
+
+In constructing this grammar I have relied mainly on the working MeTTa code
+available online in the main HE-MeTTA repo on TrueAGI GitHub and a couple other GitHub repos.   I.e.,
+this is an attempt to capture what "HE-MeTTa" (Hyperon Experimental MeTTa) is in practice right now, with
+just a few additions and tweaks based on what the developer community would like it to be.   Two features
+under discussion but not yet implemented (single-sided pattern matching, and $\textbf{progn}$ for sequential composition) are included, and a
+possible new feature (user-configurable evaluation order) is tentatively proposed
+for inclusion.
+
+\subsection{Scope and Motivation}
+
+The goal of this document is to make MeTTa easy to implement correctly
+and to reason about. Concretely, we provide (i) a complete and minimal
+surface grammar that matches real programs, (ii) a compact small-step
+operational semantics that explains evaluation in terms of equations,
+unification, and rewriting, and (iii) a precise mapping to an
+intermediate language (MeTTa-IL) that supports portable compilation,
+testing, and formal analysis. The specification aims to reduce
+ambiguity across implementations, enable correct-by-construction
+transpilers and interpreters, and serve as a stable foundation for
+tooling and future extensions.
+
+\paragraph{In scope.}
+This specification covers the following, normatively:
+\begin{itemize}
+  \item \textbf{Concrete syntax (surface grammar).} Lexical structure,
+        identifiers, variables, tokens, atoms; S-expression forms for
+        facts, type declarations \texttt{(: head type)}, and definitional
+        equalities \texttt{(= lhs rhs)}; patterns (including structured
+        patterns) and type expressions.
+  \item \textbf{Designated control forms and their strictness.}
+         \texttt{let}, \texttt{let*}, \texttt{case},
+        \texttt{match}, \texttt{superpose}, \texttt{collapse}.
+        For each, the non-strict (Atom-typed) argument positions are
+        specified and preserved by the semantics.
+  \item \textbf{Core operational semantics.} A small-step abstract
+        machine with input, knowledge base, workspace, and output
+        registers; the \emph{Query}, \emph{Chain}, \emph{Transform},
+        \emph{Add/Remove}, and \emph{Output} rules; evaluation of grounded
+        operations (booleans, arithmetic, basic data constructors).
+  \item \textbf{Spaces and bindings.} Grounded operations to create and manipulate spaces; the effect of bind! (symbol-to-space binding) and import! (module load + optional symbol installation). No separate token-expansion phase.
+        phase separation between token expansion (parse-time) and evaluation.
+  \item \textbf{Nondeterminism.} Production of multiple results via
+        multiple equations and \texttt{superpose}, and materialization via
+        \texttt{collapse}.
+  \item \textbf{Interop primitives.} The existence and calling discipline
+        of \texttt{py-atom}, \texttt{py-dot}, and \texttt{Kwargs} as grounded
+        operations with strictness of evaluated arguments documented.
+  \item \textbf{\texttt{sealed}.} A grounded primitive for on-demand
+        alpha-conversion: \texttt{(sealed (v\_1 ... v\_k) t)} freshens all
+        variable occurrences in \texttt{t} except the listed ones; this is
+        specified by a single reduction rule (fresh-name generation).
+  \item Sequential composition via \texttt{progn}, which evaluates a block
+      of forms left-to-right and returns the last result, is included as
+      a core special form.
+  \item \textbf{MeTTa-IL mapping.} A concrete schema for IL terms,
+        equations, and scripts; a deterministic translation from surface
+        constructs to IL; and the correspondence between IL execution
+        and the abstract machine rules.
+\end{itemize}
+
+\paragraph{Out of scope.}
+The following are deliberately not fixed by this specification:
+\begin{itemize}
+  \item Algorithmic complexity, cost semantics, and performance guarantees.
+  \item Concrete memory model, garbage collection, concurrency scheduling,
+        and parallel execution strategies.
+  \item Complete standard library catalog beyond the designated special
+        forms and the named grounded primitives above.
+  \item Host-language specifics of foreign functions (e.g., Python
+        object lifetimes, numeric tower exactness) beyond the call
+        discipline and argument evaluation order.
+  \item Security, capability, and sandboxing policies.
+  \item Proofs of type soundness or confluence; we provide the needed hooks
+        (types and rules) but do not prove meta-theorems
+\end{itemize}
+
+\paragraph{Extensions of Current HE-MeTTa.}
+One feature is specified as optional here, with well-defined integration
+points:
+\begin{itemize}
+  \item \textbf{Evaluation policies.} Per-symbol \texttt{eval-policy}
+        declarations to choose \emph{by-value}, \emph{by-name}, or
+        \emph{by-need} per argument, plus evaluation order and optional
+        parallel hints. The core semantics are parameterized by a policy
+                table; a thunking/forcing rule is provided for by-need.
+ \end{itemize}
+ 
+ Another couple simpler features are included as part of the language although they are not implemented in the default (HE) version of MeTTa, because their implementation has been recently requested by the developer community and they seem quite reasonable:
+ 
+  \begin{itemize}
+
+  \item \textbf{Single-sided matching.} An annotation that restricts
+        rule application to a functional (callee-driven) direction.
+        This does not affect the base machine; it constrains which
+        \emph{Query/Chain} matches are eligible.
+          \item \textbf{progn} for convenient sequential composition
+\end{itemize}
+
+%% PATCH Q: Core Conformance Set
+\subsection{Core Conformance Set}
+\label{sec:core-conformance}
+
+Based on the particulars and perspective given here, we propose that engine claiming \emph{MeTTa Core Conformance} MUST implement at minimum:
+\begin{itemize}
+  \item Rewriting by equalities and unification (Query/Chain), facts.
+  \item Special forms: \texttt{if}, \texttt{let}, \texttt{let*}, \texttt{case}, \texttt{match},
+        \texttt{quote}, \texttt{superpose}, \texttt{collapse}, \texttt{progn}, and \texttt{empty}.
+  \item Expression structure ops: \texttt{car-atom}, \texttt{cdr-atom}, \texttt{cons-atom}.
+  \item Spaces API: \texttt{new-space}, \texttt{add-atom}, \texttt{remove-atom}, \texttt{get-atoms}.
+  \item Tokens/modules: \texttt{bind!}, \texttt{import!} with cycle behavior (Sec.~\ref{sec:import-cycles}).
+  \item Grounded numerics/booleans/comparators: \texttt{+ - * /}, \texttt{< <= > >=}, \texttt{==},
+        and boolean constants \texttt{True}/\texttt{False}.
+  \item Console I/O grounders: \texttt{println!}, \texttt{trace!} (Sec.~\ref{sec:console-io}).
+\end{itemize}
+
+\subsection{Choosing between MeTTa, MeTTa-IL, MM2/MORK and PyMeTTa}
+\label{sec:choosing-levels}
+
+We are building a complex new programming language stack for AGI here, so it may be worth clarifying what I see as the unique value of each of the layers and tools involved.   It should be understood that different developers may have different perspectives on these relative value and ideal use of each tool involved, so the comments here represent one (highly educated but not omniscient) perspective.
+
+From a practical programmer's view, each layer in the stack serves a different purpose; as I see it:
+
+\paragraph{MeTTa (surface language).}
+The surface syntax is concise and human-friendly. It offers Lisp-like
+S-expressions and special forms (\texttt{if}, \texttt{let}, \texttt{match},
+\texttt{progn}, \texttt{superpose}, etc.) that make rules, control flow,
+and nondeterminism easy to express. Programmers will normally use MeTTa
+for knowledge-base development, everyday AGI algorithms, and portable
+prototyping.
+
+\paragraph{MeTTa-IL (intermediate language).}
+The IL is a canonical, desugared form with explicit strictness,
+non-strict positions, and small-step rules for every construct. It is
+well-suited for tooling (static analyzers, transpilers, verifiers) and
+for debugging subtle evaluation issues. IL is also the basis for
+compilation to external backends. Tool and engine builders, or
+programmers who need a fully explicit view of execution, will choose
+IL.
+
+\paragraph{MM2 / MORK (low-level graph operations).}
+At the lowest level, the hypergraph engine (MORK) and MM2 expose the
+primitive operations on atoms, pattern matching, and indexing. This is
+the place to work when performance is critical, or when implementing
+extensions to the engine itself. Direct use of MM2/MORK is appropriate
+for building high-performance modules, custom indexing, or integration
+with other graph stores.
+
+\paragraph{PyMeTTa and host-language integrations.}
+Beyond the core layers, many programmers will prefer to embed MeTTa
+inside a host language such as Python, using PyMeTTa or similar bindings.
+These integrations let developers script experiments, drive MeTTa queries
+from ordinary Python code, and interoperate with the extensive scientific
+and machine learning ecosystem. PyMeTTa does not replace the surface
+language or IL; rather, it exposes them through a familiar runtime and
+object model, making it easier to orchestrate experiments, connect to
+external libraries, and integrate MeTTa programs into larger software
+projects. Programmers reach for PyMeTTa when they want convenience and
+ecosystem leverage, but still rely on MeTTa and MeTTa-IL as the normative
+language layers.
+
+\paragraph{Summary.}
+Programmers reach for MeTTa by default; when precision and portability
+matter they inspect or emit MeTTa-IL; when putting together applications needing
+limited and well-defined MeTTa functionalities they may use PyMeTTa or similar; when absolute control and
+performance are required they work directly with MM2/MORK.
+
+\section{MeTTa Syntax Specification}
+
+This section provides a complete surface grammar for MeTTa that is
+minimal, regular, and suitable for transpilation to MeTTa-IL. It
+captures the concrete syntax, abstract categories, and evaluation-order
+annotations needed for correct implementation.
+
+\subsection{Scope and Overview}
+
+This grammar covers:
+\begin{itemize}
+\item \textbf{Lexical structure}: Characters to tokens to S-expressions
+\item \textbf{Program structure}: Facts, type declarations \texttt{(:)}, 
+      definitional equalities \texttt{(=)}, meta-forms (\texttt{bind!}, 
+      \texttt{import!}), and evaluation directives \texttt{!}
+\item \textbf{Patterns and types}: Pattern matching syntax and type expressions
+\item \textbf{Evaluation model}: Special forms with non-strict argument positions
+\item \textbf{Standard library}: Space operations, Python interop, assertions
+\item \textbf{Extensions}: Optional single-sided matching \texttt{(=>)} and
+      sealed variables
+\end{itemize}
+
+\noindent
+\textbf{Out of scope}: Reduction rules, cost semantics, and concurrency belong
+to the operational semantics (Section~\ref{sec:operational}), not the surface grammar.
+
+\subsection{Lexical Structure}
+
+\subsubsection{Whitespace and Comments}
+
+\begin{lstlisting}
+Whitespace ::= U+0009 | U+000A | U+000D | U+0020 
+             | <other Unicode spaces>
+Comment    ::= ';' <any-char-except-linebreak>*
+\end{lstlisting}
+
+Comments run from \texttt{;} to end of line. Whitespace and comments may
+appear between any tokens.
+
+\subsubsection{Basic Tokens}
+
+\begin{lstlisting}
+(* Parentheses - MeTTa is fully parenthesized *)
+LP ::= '('
+RP ::= ')'
+
+(* Literals *)
+String  ::= '"' { '\\"' | '\\n' | '\\t' | '\\\\' 
+          | <any-char-except["\\]> } '"'
+Number  ::= ['+' | '-'] Digit+ ['.' Digit+]
+Bool    ::= 'True' | 'False'
+Unit    ::= '(' ')'
+\end{lstlisting}
+
+\subsubsection{Identifiers}
+
+\begin{lstlisting}
+(* Symbols ? any unquoted identifier *)
+Symbol  ::= IdStart IdCont*
+IdStart ::= Letter | '_' | '+' | '-' | '*' | '/' |
+            '<' | '>' | '=' | '%' | '!' | '?' | ':' | '.' | '@' | '^' |
+            '~' | '|' | UnicodeLetter
+IdCont  ::= IdStart | Digit
+
+(* Variables ? for patterns and types *)
+Variable ::= '$' Symbol
+
+Letter         ::= 'A'..'Z' | 'a'..'z'
+UnicodeLetter  ::= <any Unicode code point with XID_Start=true, excluding Letter>
+Digit          ::= '0'..'9'
+\end{lstlisting}
+
+\subsection{Program Structure}
+
+\subsubsection{Core Syntactic Categories}
+
+\begin{lstlisting}
+Program  ::= Toplevel*
+Toplevel ::= Form | EvalItem
+EvalItem ::= '!' Form    (* evaluation directive *)
+
+Form     ::= Atom | List
+Atom     ::= Variable | Symbol | Grounded | Unit
+Grounded ::= Number | String | Bool
+List     ::= '(' Element* ')'
+Element  ::= Atom | List
+\end{lstlisting}
+Any \texttt{Form} is legal at top level, but certain heads trigger special
+interpretation.
+
+\subsubsection{Patterns}
+
+Patterns are a syntactic subset of \texttt{Form} used in:
+\begin{itemize}
+\item Left-hand sides of \texttt{(= pattern form)}
+\item Match expressions \texttt{(match space pattern result)}
+\item Let bindings \texttt{(let pattern value body)}
+\item Case branches \texttt{(case expr ((p1 r1) ...))}
+\end{itemize}
+
+\begin{lstlisting}
+Pattern ::= PatAtom | PatList
+PatAtom ::= Variable | Symbol | Number | String 
+          | Bool | Unit
+PatList ::= '(' Pattern* ')'
+\end{lstlisting}
+
+Variables capture values; all other elements match literally.
+
+\subsubsection{Top-Level Forms}
+
+These are ordinary lists distinguished by their head symbol:
+
+\begin{lstlisting}
+(* Type declaration *)
+TypeDecl ::= '(' ':' Pattern TypeExpr ')'
+
+(* Definitional equality *)
+DefEq ::= '(' '=' Pattern Form ')'
+
+(* Optional: Single-sided (forward-only) matching *)
+DefEqOneSide ::= '(' '=>' Pattern Form ')'
+
+(* Symbol binding and module import *)
+SymbolBind ::= '(' 'bind!' Symbol Form ')'
+Import      ::= '(' 'import!' Symbol Symbol ')'
+\end{lstlisting}
+
+\begin{itemize}
+\item \texttt{(: f T)}: Declares type \texttt{T} for pattern \texttt{f}
+\item \texttt{(= lhs rhs)}: Bidirectional rewrite rule
+\item \texttt{(=> lhs rhs)}: Forward-only rewrite (optional extension)
+\item \texttt{(bind! name expr)}: Binds symbol \texttt{name} to the evaluated \texttt{expr}.
+\item \texttt{(import! name module)}: Imports \texttt{module} into a fresh space bound to symbol \texttt{name}.
+\end{itemize}
+
+\subsection{Type System}
+
+\subsubsection{Type Expressions}
+
+Types are first-class S-expressions:
+
+\begin{lstlisting}
+TypeExpr ::= TypeAtom
+           | '(' '->' TypeExpr+ ')'      (* function type *)
+           | '(' TypeExpr TypeExpr* ')'  (* application *)
+
+TypeAtom ::= 'Type' | 'Atom' | 'Expression' | 'Symbol'
+           | 'Bool' | 'Number' | 'String' | 'Nat'
+           | 'hyperon::space::DynSpace'
+           | Symbol    (* user-defined *)
+           | Variable  (* type variable $t *)
+\end{lstlisting}
+
+Examples:
+\begin{itemize}
+\item \texttt{(-> Number Number Number)}: Binary numeric function
+\item \texttt{(-> Bool Atom Atom \$t)}: Polymorphic conditional
+\item \texttt{(List Number)}: Parameterized type
+\end{itemize}
+
+\subsubsection{Static Semantics (Minimal Typing Fragment)}
+\label{sec:typing-fragment}
+
+The type system is optional but provides useful validation. We write 
+$\Gamma \vdash e : T$ for term typing.
+
+\paragraph{Type checking rules:}
+
+\begin{itemize}
+\item \textbf{Declaration lookup}: If \texttt{(: f T)} is declared, then 
+      $\Gamma \vdash f : T$
+\item \textbf{Application}: If $\Gamma \vdash f : (-> T_1 \ldots T_n T)$ and
+      $\Gamma \vdash e_i : T_i$ for each $i$, then 
+      $\Gamma \vdash (f\,e_1 \ldots e_n) : T$
+\item \textbf{Equality}: Both sides must have the same type
+\end{itemize}
+
+\paragraph{Principal types for designated forms:}
+
+\begin{lstlisting}
+let   : (-> Pattern Form Atom $t)
+case  : (-> Form (List (Pair Pattern Atom)) $t)
+match : (-> Space Atom Atom $t)
+\end{lstlisting}
+
+\noindent\textit{Note: In H-E MeTTa, \texttt{if} and \texttt{quote} are ordinary library functions
+with \texttt{Atom}-typed parameters.}
+
+Type variables like \texttt{\$t} are schematic and unify with any type.
+
+\subsection{Evaluation Model and Special Forms}
+
+\subsubsection{Designated Forms with Non-Strict Arguments}
+
+Certain positions are marked \texttt{Atom}-typed and not evaluated before
+being passed to the form: \footnote{In H-E MeTTa, 'if' and 'quote' are ordinary library functions, not language-level designated forms. Their laziness arises from Atom-typed parameters.}
+
+
+\begin{center}
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Form} & \textbf{Shape} & \textbf{Non-strict positions} \\
+\hline
+\texttt{let} & \texttt{(let pat val body)} & 1, 3 \\
+\texttt{let*} & \texttt{(let* ((p1 v1) ...) body)} & patterns, body \\
+\texttt{case} & \texttt{(case e ((p1 r1) ...))} & branch results \\
+\texttt{match} & \texttt{(match space pat result)} & 2, 3 \\
+\texttt{superpose} & \texttt{(superpose (a1 ...))} & elements \\
+\texttt{collapse} & \texttt{(collapse atom)} & 1 \\
+\texttt{sealed} & \texttt{(sealed (vars) body)} & 1, 2 \\
+\texttt{progn} & \texttt{(progn form1 ...)} & none (all strict) \\
+\hline
+\end{tabular}
+\end{center}
+
+\subsubsection{Boolean Short-Circuit Forms}
+\label{sec:boolean-macros}
+
+Standard boolean operators with short-circuit evaluation:
+
+\begin{lstlisting}
+(: and (-> Bool Atom Bool))
+(= (and True $q) $q)
+(= (and False $q) False)
+
+(: or (-> Bool Atom Bool))
+(= (or True $q) True)
+(= (or False $q) $q)
+
+(: not (-> Bool Bool))
+(= (not True) False)
+(= (not False) True)
+\end{lstlisting}
+
+The second argument is \texttt{Atom}-typed to ensure lazy evaluation.
+
+\subsection{Standard Library Forms}
+
+\subsubsection{Space Operations}
+
+\begin{lstlisting}
+(new-space)                    (* creates fresh space *)
+(add-atom <Space> <Atom>)      (* adds atom as-is *)
+(remove-atom <Space> <Atom>)   (* removes if present *)
+(add-reduct <Space> <Form>)    (* adds reduced form *)
+(get-atoms <Space> <Pattern>)  (* returns match tuple *)
+\end{lstlisting}
+
+\subsubsection{Python Interoperability}
+
+\begin{lstlisting}
+(py-atom <String> [<Type>])    (* import Python object *)
+(py-dot <Grounded> <Symbol>)   (* attribute access *)
+(Kwargs (<key> <val>) ...)     (* keyword arguments *)
+
+(* Python collections *)
+(py-list (<Atom> ...))
+(py-tuple (<Atom> ...))
+(py-dict ((<Key> <Val>) ...))
+\end{lstlisting}
+
+\subsubsection{Grounded Numeric and Relational Operators}
+\label{sec:grounded-operators}
+
+\begin{center}
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Operator} & \textbf{Type} \\
+\hline
+\texttt{+}, \texttt{-}, \texttt{*}, \texttt{/} & \texttt{(-> Number Number Number)} \\
+\texttt{<}, \texttt{<=}, \texttt{>}, \texttt{>=} & \texttt{(-> Number Number Bool)} \\
+\texttt{==} & \texttt{(-> Atom Atom Bool)} \\
+\hline
+\end{tabular}
+\end{center}
+
+\subsubsection{Console I/O}
+
+\begin{lstlisting}
+(println! <Atom>)    (* prints to console *)
+(trace! <Atom>)      (* debug output *)
+\end{lstlisting}
+
+\subsubsection{Assertions}
+
+\begin{lstlisting}
+(assertEqual <Form> <Form>)
+(assertEqualToResult <Form> (<Atom> ...))
+\end{lstlisting}
+
+\texttt{Error} is a conventional symbol; assertions return \texttt{()} on
+success or an error atom on failure.
+
+\subsection{Advanced Features}
+
+\subsubsection{Sealed Variables (Alpha-Conversion)}
+
+\begin{lstlisting}
+(sealed (<Variable> ...) <Atom>)
+\end{lstlisting}
+
+Renames all variables in the body except those listed, preventing accidental
+capture. Both the variable list and body are non-strict.
+
+\subsubsection{Syntactic Sugar (Optional)}
+
+These desugarings may be implemented in the parser:
+
+\begin{lstlisting}
+(* Lambda arity sugar *)
+(lambda2 $x $y body) => (lambda $x (lambda $y body))
+
+(* List literals *)
+(list a b c) => (Cons a (Cons b (Cons c Nil)))
+\end{lstlisting}
+
+\subsubsection{Library definitions for \texttt{if} and \texttt{quote} (H-E MeTTa)}
+\label{sec:if-quote-library}
+
+\begin{lstlisting}
+(: if    (-> Bool Atom Atom $t))
+(= (if True  $then $else) $then)
+(= (if False $then $else) $else)
+
+(: quote (-> Atom Atom))
+(= (quote $a) $a)
+\end{lstlisting}
+
+These are ordinary functions; their non-strict behavior stems from \texttt{Atom}-typed arguments.
+
+
+\subsection{Complete Grammar (EBNF)}
+
+
+\begin{lstlisting}
+Program     ::= { Toplevel } ;
+
+Toplevel    ::= EvalItem | Form ;
+EvalItem    ::= '!' Form ;
+
+Form        ::= Atom | List ;
+
+List        ::= '(' { Element } ')' ;
+Element     ::= Atom | List ;
+
+Atom        ::= Variable | Symbol | Grounded | Unit ;
+Grounded    ::= Number | String | Bool ;
+
+
+Variable    ::= '$' Symbol ;
+
+Symbol   ::= SymStart { SymCont } ;
+SymStart ::= AsciiLetter | '_' | '+' | '-' | '*' | '/' |
+             '<' | '>' | '=' | '%' | '!' | '?' | ':' | '.' | '@' | '^' |
+             '~' | '|' | UnicodeLetter ;
+SymCont  ::= SymStart | Digit ;
+
+AsciiLetter   ::= 'A'..'Z' | 'a'..'z' ;
+UnicodeLetter ::= <any Unicode code point whose General_Category?{Lu,Ll,Lt,Lm,Lo,Nl}
+                   and not in AsciiLetter> ;
+Digit         ::= '0'..'9' ;
+
+Whitespace ::= U+0009 | U+000A | U+000D | U+0020 | <OtherUnicodeSpaces> ;
+Comment    ::= ';' { AnyCharExceptLinebreak } ;
+AnyCharExceptLinebreak ::= <any char except U+000A, U+000D> ;
+
+
+
+String ::= '"' { '\"' | '\n' | '\t' | '\\\\' | AnyExceptQuoteBackslash } '"' ;
+AnyExceptQuoteBackslash ::= <any char except '"' or '\'> ;
+
+Number      ::= [ '+' | '-' ] Digit { Digit } [ '.' Digit { Digit } ] ;
+Bool        ::= 'True' | 'False' ;
+Unit        ::= '(' ')' ;
+
+(* Patterns are syntactic; same terminals as Form but restricted *)
+Pattern     ::= PatAtom | PatList ;
+PatAtom     ::= Variable | Symbol | Number | String | Bool | Unit  ;
+PatList     ::= '(' { Pattern } ')' ;
+
+(* Type expressions are ordinary Forms; accepted surface shapes *)
+TypeExpr    ::= TypeAtom
+              | '(' '->' TypeExpr { TypeExpr } ')'
+              | '(' TypeExpr { TypeExpr } ')' ;
+TypeAtom    ::= 'Type' | 'Atom' | 'Expression' | 'Symbol'
+              | 'Bool' | 'Number' | 'String' | 'Nat'
+              | 'hyperon::space::DynSpace'
+              | Symbol | Variable ;
+
+(* Recognized heads (shapes) ? classification only *)
+TypeDecl       ::= '(' ':' Pattern TypeExpr ')' ;
+DefEq          ::= '(' '='  Pattern Form ')' ;
+DefEqOneSide   ::= '(' '=>' Pattern Form ')' ; optional extension
+
+SymbolBind     ::= '(' 'bind!'   Symbol Form ')' ;
+Import         ::= '(' 'import!' Symbol Symbol ')' ;
+
+(* Special forms with Atom (non-strict) positions preserved *)
+LetForm        ::= '(' 'let'   Pattern Form Atom ')' ;
+LetStarForm    ::= '(' 'let*'  '(' { '(' Pattern Form ')' } ')' Atom ')' ;
+CaseForm       ::= '(' 'case'  Form '(' { '(' Pattern Atom ')' } ')' ')' ;
+MatchForm      ::= '(' 'match' Form Pattern Atom ')' ;
+SuperposeForm  ::= '(' 'superpose' '(' { Atom } ')' ')' ;
+CollapseForm   ::= '(' 'collapse' Atom ')' ;
+SealedForm     ::= '(' 'sealed' '(' { Variable } ')' Atom ')' ;
+PrognForm     ::= '(' 'progn' { Form } ')' ;
+
+
+(* Interop and spaces (normative shapes) *)
+NewSpace       ::= '(' 'new-space' ')' ;
+AddAtom        ::= '(' 'add-atom'    Form Atom ')' ;
+RemoveAtom     ::= '(' 'remove-atom' Form Atom ')' ;
+AddReduct      ::= '(' 'add-reduct'  Form Form ')' ;
+GetAtoms       ::= '(' 'get-atoms'   Form Pattern ')' ;
+
+PyAtom         ::= '(' 'py-atom' String [ TypeExpr ] ')' ;
+PyDot          ::= '(' 'py-dot'  Form Symbol ')' ;
+Kwargs         ::= '(' 'Kwargs'  { '(' Symbol Form ')' } ')' ;
+
+AssertEq       ::= '(' 'assertEqual'         Form Form ')' ;
+AssertEqRes    ::= '(' 'assertEqualToResult' Form '(' { Atom } ')' ')' ;
+\end{lstlisting}
+
+
+\subsection{Implementation Guidance}
+
+\subsubsection{Parsing Pipeline}
+
+\begin{enumerate}
+\item \textbf{Tokenization}: Convert character stream to tokens
+\item \textbf{S-expression parsing}: Build tree structure
+\item \textbf{Classification}: Identify designated forms and non-strict positions
+\item \textbf{AST construction}: Tag non-strict positions for the transpiler
+\end{enumerate}
+
+\noindent\textit{Scope note: classification may consult a fixed set of built-ins and
+library-declared shapes (e.g., functions whose types include \texttt{Atom}-typed parameters).
+In H-E MeTTa, \texttt{if} and \texttt{quote} are library functions; their laziness is derived
+from their types, not from parser-level special status.}
+
+\subsubsection{Transpiler Requirements}
+
+The transpiler must:
+\begin{itemize}
+\item Preserve non-strict argument positions (marked as \texttt{Atom})
+\item Expand tokens at parse time, not runtime
+\item Collect type declarations for optional checking
+\item Handle single-sided rules (or reject with diagnostic)
+\end{itemize}
+
+\subsubsection{Why This Grammar Suffices for MeTTa-IL}
+
+\begin{itemize}
+\item Simple S-expression base with recognized heads maps directly to IL nodes
+\item Non-strict positions are explicitly marked for correct compilation
+\item Token/space mechanics translate to IL declarations
+\item All extensions (sealed, single-sided rules, etc.) are expressible as 
+      ordinary lists with special interpretation
+\end{itemize}
+
+
+\subsubsection{Minimal examples that parse under this grammar}
+
+\begin{lstlisting}
+; facts
+(Parent Tom Bob)
+
+; type and definition
+(: inc (-> Number Number))
+(= (inc $x) (+ $x 1))
+
+; token and import
+(bind! &kb (new-space))
+(import! &self stdlib)
+
+; query (non-strict output pattern)
+! (match &self (Parent $x Bob) $x)
+
+; control forms honoring non-strict positions
+! (if (> 2 1) (quote OK) (quote FAIL))
+
+; let/let*
+! (let (age $a) (match &self (Age Alice $a) $a))
+
+; nondeterminism
+(= (coin) 0)  (= (coin) 1)
+! (collapse (coin))          ; materialize all results into a tuple
+
+; sealed (keep $x, freshen others)
+! (sealed ($x) (Cons $x (Cons $y Nil)))
+
+; grounded atoms: Python interop
+(bind! &np (py-atom "numpy"))
+! ((py-dot &np arange) (Kwargs (start 2) (stop 10) (step 3)))
+
+; spaces API
+(add-atom &self (Male Tom))
+! (get-atoms &self (Male $x))
+
+; asserts and Error is just a symbol
+! (assertEqual (+ 2 2) 4)
+\end{lstlisting}
+
+All of the above are legal by the grammar; behavior is determined by the
+standard library and the operational semantics in the IL/backend.
+
+
+\section{Compact Small-Step Operational Semantics for MeTTa}
+\label{sec:operational}
+
+This section provides a complete small-step operational semantics for MeTTa
+aligned with the surface grammar. The semantics (i) matches practical usage
+including spaces, equality, nondeterminism, and control forms, and (ii) enables
+clean compilation to MeTTa-IL based on graph-structured $\lambda$-theories (GSLTs).
+
+\subsection{Overview and Approach}
+
+\paragraph{Style.} 
+We use a small-step SOS over a multi-register abstract machine from Meta-MeTTa,
+extended to cover all surface constructs needed for translation.
+
+\paragraph{Evaluation model.} 
+Evaluation proceeds by query-driven rewriting via equalities. Nondeterminism
+is explicit. Grounded functions (primitives like numbers, strings, \texttt{+},
+\texttt{and}, Python bridges) reduce by calling the host layer.
+
+\subsection{Abstract Syntax}
+
+We assume the surface grammar from Section 2. The runtime abstract syntax is:
+
+\paragraph{Atoms and expressions.}
+\begin{lstlisting}
+a ::= s | v | g | (a a ... a)
+\end{lstlisting}
+where $s$ is a symbol, $v$ a variable (\texttt{\$x}), $g$ a grounded atom
+(numbers, strings, booleans, host objects), and \texttt{(a ...)} an
+application/expression.
+
+\paragraph{Distinguished constructors (values).}
+\begin{itemize}
+\item \textbf{Equalities}: \texttt{(= a a)} and optionally \texttt{(=> a a)} 
+      (directed, see \S\ref{s:dir})
+\item \textbf{Nondeterminism}: \texttt{(superpose (a ... a))}, 
+      \texttt{(collapse a)}, \texttt{(empty)}
+\item \textbf{Sealing}: \texttt{(sealed (v\_1 ... v\_k) a)} for 
+      alpha-conversion on demand
+\end{itemize}
+
+\paragraph{Spaces and modules.}
+A space atom $\Sigma$ (e.g., \texttt{self}) denotes a MeTTa space;
+it is a grounded atom with the Space API.
+
+\paragraph{Programs.}
+A program is a multiset of atoms (facts and equalities) plus top-level
+requests \texttt{! a}. Type declarations \texttt{(: a T)} are static and
+affect typing only (no reduction).
+
+\subsection{Machine State and Configuration}
+
+We adopt and extend the Meta-MeTTa four-register machine:
+
+\[
+S \;=\; \langle I, K, W, O \mid \vartheta, \mathcal{M}, \nu \rangle
+\]
+
+\begin{itemize}
+\item $I, K, W, O$ are multisets of terms (input, knowledge, workspace, output)
+\item $\vartheta$ is the \emph{token map} mapping token refs (e.g., \texttt{np})
+      to atoms, mutated by \texttt{bind!} and \texttt{import!}
+\item $\mathcal{M}$ is the module store mapping module names to spaces or 
+      initial KBs
+\item $\nu$ is the freshness supply for generating unique variable names
+\end{itemize}
+
+A small step is $S \to S'$. The knowledge base $K$ holds equalities
+\texttt{(= t u)} and facts (optionally tagged with spaces).
+
+\subsubsection{Freshness Service}
+\label{sec:freshness}
+
+The freshness supply $\nu$ provides globally unique variable names within a run.
+
+\paragraph{Concurrency requirement.}
+In concurrent executions, the freshness service must be \emph{linearizable}:
+each allocation occurs at a single point in a total order consistent with
+real time. Implementations may use: (i) atomic counters, (ii) thread-safe
+PRNG/UUID sources, or (iii) serialized \texttt{sealed} steps. Programs must
+not rely on the spelling of fresh names, only their uniqueness.
+
+\subsubsection{Evaluation Conventions}
+
+\paragraph{Non-strict arguments.}
+When a parameter has type \texttt{Atom}, the argument is \emph{not reduced}
+before the function sees it. When the type is computational (e.g., 
+\texttt{Number}, \texttt{Bool}), arguments are reduced first. This matches
+the behavior of \texttt{match}, \texttt{if}, \texttt{let}, \texttt{quote}, etc.
+
+\paragraph{Insensitive predicate.}
+\label{def:insensitive}
+For a term $t$ and KB $K$, define:
+\[
+\mathrm{insensitive}(t,K) \;:\Longleftrightarrow\;
+\forall\, (=\,t_i\,u_i)\in K.\ \mathrm{unify}(t,t_i)\ \text{fails}
+\]
+For \textbf{Transform} with facts rather than equalities, use the same
+definition. The machine moves items between registers only when insensitive.
+
+\subsection{Core Reduction Rules}
+\label{s:core-rules}
+
+The core uses standard Meta-MeTTa rules with evaluation contexts $K[\cdot]$.
+
+\paragraph{Query (apply equalities at the input).}
+\[
+\frac{
+\sigma_j = \mathrm{unify}(t', t_j),\quad
+k = \{(=\,t_1\,u_1),\ldots,(=\,t_n\,u_n)\}\uplus k',\quad
+\mathrm{insensitive}(t',k')
+}{
+\langle \{K[t']\}\uplus I,\, k,\, W,\, O \rangle \to
+\big\langle I,\, k,\, \{K[u_j\sigma_j]\mid j\in J\}\uplus W,\, O \big\rangle
+}
+\]
+
+\paragraph{Chain (continue rewriting from workspace).}
+\[
+\frac{
+\sigma_j = \mathrm{unify}(u, t_j),\quad
+k = \{(=\,t_1\,u_1),\ldots,(=\,t_n\,u_n)\}\uplus k',\quad
+\mathrm{insensitive}(u,k')
+}{
+\langle I,\, k,\, \{K[u]\}\uplus W,\, O \rangle \to
+\big\langle I,\, k,\, \{K[u_j\sigma_j]\mid j\in J\}\uplus W,\, O \big\rangle
+}
+\]
+
+\paragraph{Transform (pattern-directed replacement).}
+\[
+\frac{
+\sigma_j = \mathrm{unify}(t, t_j),\quad
+k = \{t_1,\ldots,t_n\}\uplus k',\quad
+\mathrm{insensitive}(t,k')
+}{
+\langle \{(\mathrm{transform}\ t\ u)\}\uplus I,\, k,\, W,\, O \rangle \to
+\big\langle I,\, k,\, \{K_j[u\sigma_j]\mid j=1..n\}\uplus W,\, O \big\rangle
+}
+\]
+
+\paragraph{Space operations.}
+We notate $a@\Sigma$ as ``atom $a$ lives in space $\Sigma$''.
+
+\begin{align}
+\langle \{(\mathrm{add\text{-}atom}\ \Sigma\ a)\}\uplus I,\, k,\, W,\, O \rangle
+ &\to \langle I,\, k\uplus\{a@\Sigma\},\, W,\, \{()\}\uplus O \rangle \\
+\langle \{(\mathrm{remove\text{-}atom}\ \Sigma\ a)\}\uplus I,\, \{a@\Sigma\}\uplus k,\, W,\, O \rangle
+ &\to \langle I,\, k,\, W,\, \{()\}\uplus O \rangle \\
+\langle \{(\mathrm{remove\text{-}atom}\ \Sigma\ a)\}\uplus I,\, k,\, W,\, O \rangle
+ &\to \langle I,\, k,\, W,\, \{()\}\uplus O \rangle \quad\text{(absent OK)}
+\end{align}
+
+\paragraph{Get-atoms (space query).}
+Let $\mathsf{Facts}(\Sigma) = \{ a \mid a@\Sigma\in k \}$.
+\[
+\frac{
+M = \{\,a\sigma \mid a\in\mathsf{Facts}(\Sigma),\ \sigma=\mathrm{unify}(a,p)\,\}
+}{
+\langle \{(\mathrm{get\text{-}atoms}\ \Sigma\ p)\}\uplus I,\, k,\, W,\, O \rangle \to
+\langle I,\, k,\, W,\, \{(m_1\,\ldots\,m_m)\}\uplus O \rangle
+}
+\]
+
+\paragraph{Output.}
+\[
+\langle I,\, k,\, \{u\}\uplus W,\, O \rangle \to 
+\langle I,\, k,\, W,\, \{u\}\uplus O \rangle
+\]
+
+\subsubsection{Nondeterminism and Result Ordering}
+\label{sec:order-profiles}
+
+Multiple equalities may match, producing multiple results pushed to $W$ then $O$.
+
+\paragraph{Result ordering.}
+Core semantics does not constrain the order of results from \texttt{superpose},
+\texttt{collapse}, or \texttt{get-atoms}. Programs must not assume specific order.
+
+\paragraph{Deterministic Profile (optional).}
+Deployments requiring determinism may implement: (i) \texttt{get-atoms} orders
+matches lexicographically by printed form; (ii) \texttt{collapse} orders elements
+similarly. Engines advertising this profile must apply it uniformly.
+
+\subsection{Grounded Operations}
+
+Grounded operations reduce by host evaluation when arguments are values.
+
+\subsubsection{Basic Arithmetic and Logic}
+
+\begin{align}
+\langle \{(+\ n_1\ n_2)\}\uplus I,\, k,\, W,\, O \rangle
+ &\to \langle I,\, k,\, W,\, \{n_1{+}n_2\}\uplus O \rangle \\
+\langle \{(\mathrm{and}\ b_1\ b_2)\}\uplus I,\, k,\, W,\, O \rangle
+ &\to \langle I,\, k,\, W,\, \{b_1\wedge b_2\}\uplus O \rangle \\
+\langle \{(==\ x\ y)\}\uplus I,\, k,\, W,\, O \rangle
+ &\to \langle I,\, k,\, W,\, \{\mathrm{True/False/BadType}\}\uplus O \rangle
+\end{align}
+
+\subsubsection{Numeric and Relational Operators}
+\label{sec:num-rel-grounders}
+
+The following are strict in all arguments:
+
+\begin{center}
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Operator} & \textbf{Principal type} \\
+\hline
+\texttt{+}, \texttt{-}, \texttt{*}, \texttt{/} & \texttt{(-> Number Number Number)} \\
+\texttt{<}, \texttt{<=}, \texttt{>}, \texttt{>=} & \texttt{(-> Number Number Bool)} \\
+\texttt{==} & \texttt{(-> Atom Atom Bool)} \\
+\hline
+\end{tabular}
+\end{center}
+
+Invalid types yield \texttt{BadType} or typed \texttt{Error} (see \S\ref{sec:error-model}).
+Engines MAY extend numeric towers but must document semantics.
+
+\subsubsection{Console I/O}
+\label{sec:console-io}
+
+\begin{lstlisting}
+(: println! (-> Atom Unit))
+(: trace!   (-> Atom Unit))
+\end{lstlisting}
+
+Both are strict, perform console output (implementation-defined textualization),
+and return unit \texttt{()}. Formatting errors yield \texttt{(Error io-exn ...)}.
+
+\subsection{Surface Construct Semantics}
+
+Special forms are implemented via macro-expansion or dedicated rules.
+
+\subsubsection{Equality and Function Clauses}
+
+A clause \texttt{(= (f p1 ... pn) body)} contributes an equality to $K$.
+Evaluating \texttt{(f a1 ... an)} proceeds by Query/Chain via unification.
+This is the standard MeTTa ``functions as equations'' pattern.
+
+\subsubsection{Single-Sided Matching (Optional)}
+\label{s:dir}
+
+In addition to bidirectional \texttt{(= t u)}, we allow directed \texttt{(=> t u)}.
+Directed rules participate in Query/Chain but only left-to-right. Formally,
+maintain $K_{\mathrm{eq}}$ and $K_{\rightarrow}$; Query/Chain draw from
+$K_{\mathrm{eq}}\cup K_{\rightarrow}$ using unification on the left side only.
+
+\subsubsection{Control Forms}
+
+\paragraph{match.}
+Type: $(\to\ \mathrm{Space}\ \mathrm{Atom}\ \mathrm{Atom}\ \%Undefined\%)$.
+Arguments 2 and 3 are non-strict.
+\[
+\langle \{(\mathrm{match}\ \Sigma\ p_{in}\ p_{out})\}\uplus I,\, k,\, W,\, O \rangle
+\to \langle I,\, k,\, W\uplus\{\,p_{out}\sigma \mid \sigma\in\mathrm{Solutions}(\Sigma\vdash p_{in})\,\},\, O \rangle
+\]
+
+\paragraph{if.}
+Only the condition is strict; branches are Atom-typed.
+\begin{align}
+\langle \{(\mathrm{if}\ \mathrm{True}\ a\ b)\}\uplus I,\, k,\, W,\, O \rangle
+ &\to \langle \{a\}\uplus I,\, k,\, W,\, O \rangle \\
+\langle \{(\mathrm{if}\ \mathrm{False}\ a\ b)\}\uplus I,\, k,\, W,\, O \rangle
+ &\to \langle \{b\}\uplus I,\, k,\, W,\, O \rangle
+\end{align}
+
+\paragraph{let and let*.}
+\texttt{(let p e body)} evaluates $e$ to $v$, unifies with pattern $p$,
+then evaluates $\mathrm{body}\sigma$ on success:
+\[
+\frac{e\Downarrow v \qquad \sigma=\mathrm{unify}(p,v)}
+{\langle \{(\mathrm{let}\ p\ e\ \mathrm{body})\}\uplus I,\, k,\, W,\, O \rangle
+ \to \langle \{\mathrm{body}\sigma\}\uplus I,\, k,\, W,\, O \rangle}
+\]
+\texttt{let*} expands to nested \texttt{let}s.
+
+\paragraph{case.}
+\texttt{(case e ((p1 r1) ... (pn rn)))} evaluates $e$ to $v$, finds first
+matching pattern $p_i$, returns $r_i\sigma$. Pattern \texttt{Empty} catches
+empty results.
+
+\paragraph{Sequential composition: progn.}
+\label{sec:progn}
+\texttt{(progn e1 ... en)} evaluates arguments left-to-right, returns last value.
+Strict in all arguments. Empty results or errors propagate.
+\[
+(\mathrm{progn}\ e) \to e \qquad
+(\mathrm{progn}\ e_1\ e_2\ \ldots\ e_n) \to (\mathrm{progn}\ e_2\ \ldots\ e_n)
+\text{ after } e_1 \Downarrow v
+\]
+
+\paragraph{quote.}
+\texttt{(quote a)} creates a value preventing reduction of $a$ until unwrapped.
+
+\subsubsection{Nondeterminism Operators}
+\label{s:nondet}
+
+\paragraph{superpose.}
+\[
+\langle \{(\mathrm{superpose}\ (a_1\ \ldots\ a_n))\}\uplus I,\, k,\, W,\, O \rangle
+\to \langle I,\, k,\, W,\, \{a_1,\ldots,a_n\}\uplus O \rangle
+\]
+
+\paragraph{collapse.}
+Evaluates $e$ and collects all results into a tuple:
+\[
+\langle \{(\mathrm{collapse}\ e)\}\uplus I,\, k,\, W,\, O \rangle
+\to \langle I,\, k,\, W,\, \{(r_1\ \ldots\ r_m)\}\uplus O \rangle
+\]
+
+\paragraph{empty.}
+Returns no result for branch pruning.
+
+\subsubsection{Expression Structure Operations}
+\label{s:expr-ops}
+
+\texttt{car-atom}, \texttt{cdr-atom}, \texttt{cons-atom} operate on expressions
+at the meta level. Their \texttt{Expression}-typed arguments are non-strict
+unless explicitly bound via \texttt{let}.
+
+\subsubsection{Space API}
+
+\texttt{self} is the current program space. \texttt{(new-space)} creates a
+fresh space. \texttt{add-atom}, \texttt{remove-atom}, and \texttt{match} follow
+the core rules (\S\ref{s:core-rules}). \texttt{(add-reduct $\Sigma$ a)} adds
+the \emph{reduced} form of $a$ to $\Sigma$. \texttt{get-atoms} returns a tuple
+of matches.
+
+\subsubsection{Tokens and Modules}
+\label{s:tokens-mod}
+
+\paragraph{bind!}
+\[
+\frac{e\Downarrow v}{\langle \{(\mathrm{bind!}\ \&t\ e)\}\uplus I,\, k,\, W,\, O \mid \vartheta, \mathcal{M}, \nu \rangle
+\to \langle I,\, k,\, W,\, \{()\}\uplus O \mid \vartheta[\&t:=v], \mathcal{M}, \nu \rangle}
+\]
+Future parsing replaces \texttt{t} with $v$.
+
+\paragraph{import!}
+\[
+\frac{\mathcal{M}(m)=K_m \qquad \Sigma_m=\mathrm{freshSpace}()}
+{\langle \{(\mathrm{import!}\ \&t\ m)\}\uplus I,\, k,\, W,\, O \mid \vartheta, \mathcal{M}, \nu \rangle
+\to
+\langle I,\, k\uplus K_m@{\Sigma_m},\, W,\, \{()\}\uplus O \mid \vartheta[\&t:=\Sigma_m], \mathcal{M}, \nu \rangle}
+\]
+Loads module $m$ into fresh space $\Sigma_m$ bound to \texttt{t}.
+
+\paragraph{Import cycles.}
+\label{sec:import-cycles}
+Let $G=(\mathcal{M},\mathcal{E})$ be the import graph. Programs are well-formed
+only if $G$ is acyclic. Cycles reduce to:
+\[
+(\mathrm{import!}\ \&t\ m) \to (\mathrm{Error}\ \mathrm{import\text{-}cycle}\ m)
+\]
+Optional: Engines may support cycles by allocating spaces for SCCs first.
+
+\subsubsection{Sealed (Alpha-Conversion)}
+\label{s:sealed}
+
+\texttt{(sealed (v\_1 ... v\_k) t)} renames all variables in $t$ except
+$\{v_1,\ldots,v_k\}$ to fresh names:
+
+\[
+\langle \{(\mathrm{sealed}\ (v_1\ \cdots\ v_k)\ t)\}\uplus I,\, k,\, W,\, O \mid \vartheta,\mathcal{M},\nu \rangle
+\to
+\langle \{\alpha_\rho(t)\}\uplus I,\, k,\, W,\, O \mid \vartheta,\mathcal{M},\nu' \rangle
+\]
+
+where $\rho$ maps unrestricted variables to fresh names from $\nu$.
+
+\subsection{Python Interoperability}
+\label{s:py}
+
+Three grounded primitives with host evaluation abstracted by $\mathrm{pyEval}$
+and $\mathrm{pyAttr}$.
+
+\paragraph{py-atom.}
+Returns a grounded object with optional type:
+\[
+\langle \{(\mathrm{py\text{-}atom}\ s\ [T])\}\uplus I,\, k,\, W,\, O \rangle
+\to
+\langle I,\, k,\, W,\, \{\mathrm{pyEval}(s,T)\}\uplus O \rangle
+\]
+
+\paragraph{py-dot.}
+Attribute access:
+\[
+\langle \{(\mathrm{py\text{-}dot}\ g\ a)\}\uplus I,\, k,\, W,\, O \rangle
+\to
+\langle I,\, k,\, W,\, \{\mathrm{pyAttr}(g,a)\}\uplus O \rangle
+\]
+
+\paragraph{Grounded call with keywords.}
+\[
+\langle \{(g\ \overrightarrow{v}\ \mathrm{Kwargs}\ \mathrm{Kw})\}\uplus I,\, k,\, W,\, O \rangle
+\to
+\langle I,\, k,\, W,\, \{\mathrm{pyEval}(g,\overrightarrow{v},\mathrm{Kw})\}\uplus O \rangle
+\]
+
+\subsubsection{Interop Lifecycle}
+\label{sec:py-lifecycle}
+
+\paragraph{Object lifetime.}
+Grounded objects must be reclaimable when unreferenced (via GC/RC/finalizers).
+Cross-runtime cycles need weak references or explicit release.
+
+\paragraph{Host exceptions.}
+Host boundary exceptions reduce to error atoms:
+\[
+\to\ (\mathrm{Error}\ \mathrm{py\text{-}exn}\ \langle\mathrm{op}\rangle\ \langle\mathrm{message}\rangle\ [\langle\mathrm{host\text{-}type}\rangle])
+\]
+
+\paragraph{Type mapping.}
+Map host scalars: Python \texttt{bool}$\rightarrow$\texttt{Bool}, \texttt{int/float}$\rightarrow$\texttt{Number},
+\texttt{str}$\rightarrow$\texttt{String}. Containers via \texttt{py-list}/\texttt{py-tuple}/\texttt{py-dict}
+or wrapped consistently.
+
+\subsection{Error Handling}
+\label{s:asserts}
+
+\subsubsection{Assertions}
+
+\texttt{Error} is a conventional symbol; no runtime exceptions exist.
+
+\paragraph{assertEqual.}
+Let $\llbracket e \rrbracket$ be the multiset of results of $e$:
+\[
+\langle \{(\mathrm{assertEqual}\ e_1\ e_2)\}\uplus I,\, k,\, W,\, O \rangle
+\to
+\begin{cases}
+\langle I,\, k,\, W,\, \{()\}\uplus O \rangle & \text{if } \llbracket e_1 \rrbracket \equiv \llbracket e_2 \rrbracket \\
+\langle I,\, k,\, W,\, \{(\mathrm{Error}\ \mathrm{assertEqual}\ e_1\ e_2)\}\uplus O \rangle & \text{otherwise}
+\end{cases}
+\]
+
+\paragraph{assertEqualToResult.}
+Compares $\llbracket e \rrbracket$ to a literal tuple $(r_1\ \ldots\ r_m)$.
+
+\subsubsection{Error Model and Propagation}
+\label{sec:error-model}
+
+Errors are first-class atoms: $(\mathrm{Error}\ \mathrm{tag}\ a_1\ \ldots\ a_k)$.
+
+\paragraph{Propagation.}
+Strict arguments with errors fail fast:
+\[
+f(\ldots, (\mathrm{Error}\ \cdots), \ldots) \to (\mathrm{Error}\ \mathrm{propagate}\ f\ \ldots)
+\]
+Non-strict arguments carry errors unevaluated until forced.
+
+\paragraph{Matching.}
+Errors are matchable data. Libraries can define \texttt{is-error} and 
+\texttt{raise} helpers.
+
+\paragraph{Lazy evaluation.}
+\label{sec:error-lazy}
+Forcing an error propagates it:
+\[
+(\mathrm{force}\ (\mathrm{Error}\ \cdots)) \to (\mathrm{Error}\ \mathrm{propagate}\ \mathrm{force}\ \cdots)
+\]
+
+\subsection{Process Interpretation (Concurrency)}
+
+Spaces can be viewed as channels for process-algebraic reading:
+
+\begin{itemize}
+\item Facts $a@\Sigma$ act as persistent inputs
+\item \texttt{add-atom} installs facts
+\item \texttt{remove-atom} withdraws guards
+\item \texttt{match} enumerates synchronizations
+\end{itemize}
+
+This justifies compilation to RSpace or similar concurrent backends.
+
+\subsection{Static Typing (Optional)}
+
+Type declarations \texttt{(: a T)} populate environment $\Delta$ but don't
+reduce. Dynamic type checks in grounded calls yield \texttt{BadType} or
+\texttt{Error} atoms on mismatch.
+
+\subsection{Transpilation to MeTTa-IL}
+\label{s:il-mapping}
+
+The semantic rules map directly to IL constructs:
+
+\paragraph{Sorts.} 
+$T$ (terms), $R$ (rewrites), Space, Ground.
+
+\paragraph{Term constructors.}
+Application, Equality, Quote, Superpose, Collapse, Empty, Space ops,
+Sealed, Python interop.
+
+\paragraph{Rewrite edges.}
+Query, Chain, Transform, Add, Remove, Get, Output, grounders, Seal.
+
+\paragraph{Strictness preservation.}
+Non-strict positions for \texttt{if}, \texttt{match}, \texttt{let}, \texttt{case},
+\texttt{quote}, \texttt{superpose}, \texttt{collapse}, \texttt{sealed}.
+
+\paragraph{Environment.}
+Tokens and imports become IL declarations updating token tables and spaces.
+
+\paragraph{Nondeterminism.}
+Multiple edges for \texttt{superpose}; frontier collection for \texttt{collapse}.
+
+\subsection{Worked micro-examples (sanity checks)}
+
+\paragraph{Function by equality.}
+\begin{lstlisting}
+(: inc (-> Number Number))
+(= (inc $x) (+ $x 1))
+! (inc 2)
+\end{lstlisting}
+\texttt{(inc 2)} rewrites to \texttt{(+ 2 1)} then to \texttt{3}.
+
+\paragraph{Pattern match over a space.}
+\begin{lstlisting}
+(Female Pam)
+(Parent Tom Bob)
+! (match &self (Parent $x Bob) $x)
+\end{lstlisting}
+\texttt{match} queries \texttt{self}, emits each $x$.
+
+\paragraph{superpose / collapse dual.}
+\begin{lstlisting}
+(= (color) green) (= (color) red) (= (color) yellow)
+! (collapse (color))    ; => (green red yellow) as one result
+\end{lstlisting}
+
+\paragraph{Sealed to avoid capture.}
+\begin{lstlisting}
+! (sealed ($x) (Cons $x (Cons $y Nil)))   ; freshens $y, keeps $x
+\end{lstlisting}
+
+\paragraph{Python interop with kwargs.}
+\begin{lstlisting}
+(bind! &np (py-atom "numpy"))
+! ((py-dot &np arange) (Kwargs (start 2) (stop 10) (step 3)))
+\end{lstlisting}
+
+\paragraph{remove-atom absent is OK.}
+\begin{lstlisting}
+! (remove-atom &self (Foo Bar))   ; always yields ()
+\end{lstlisting}
+
+
+\subsection{Design Decisions and Non-Assumptions}
+
+\begin{itemize}
+\item \textbf{No fixed $\lambda$-calculus}: MeTTa uses equations and unification.
+      Lambda-like sugars are grounded closures.
+\item \textbf{Backend-agnostic concurrency}: Space rules compile to various
+      concurrent backends.
+\item \textbf{Evaluation order}: Not customizable here (see Section 5 for
+      that extension).
+\end{itemize}
+
+\subsection{Summary for Transpiler Implementers}
+
+Classify each surface construct as:
+
+\begin{itemize}
+\item \textbf{Kernel}: Equality rewriting, \texttt{match}, space ops,
+      nondeterminism, \texttt{quote}, \texttt{sealed}, interop $\rightarrow$ IL rewrites
+\item \textbf{Macro}: \texttt{let}, \texttt{let*}, \texttt{case}, \texttt{if}
+      $\rightarrow$ preserve Atom discipline
+\item \textbf{Environment}: Tokens/modules $\rightarrow$ IL declarations and space constants
+\end{itemize}
+
+Preserve nondeterminism as multiple edges, implement \texttt{collapse} as
+tuple collection, follow Meta-MeTTa bisimulation for correctness.
+
+\section{Alternative Presentation: MeTTa Operational Semantics via the MeTTa Calculus}
+\label{sec:calc-semantics}
+
+The prior section suffices as a formal presentation of MeTTa semantics, however, it can in 
+some ways be an unwieldy way of looking at things. This section recasts the small-step register-machine semantics given above as reduction in the \emph{MeTTa Calculus} \cite{metta-calculus}, which is in some ways a simpler and more elegant presentation.   Where the machine speaks in terms of four registers $(I,K,W,O)$ and rules
+(Query, Chain, Transform, Add/Remove/Get, Output),
+the calculus speaks in terms of processes, names (spaces), and a single
+synchronization rule (\textsc{Comm}) acting on tagged atoms.
+The two views are equivalent up to structural congruence and permutation of
+independent steps; this section gives a concrete translation and correspondence.
+
+\subsection{MeTTa Calculus fragments used here}
+We assume the following standard fragments.
+Processes $P,Q ::= 0 \mid G \mid \mathsf{for}(t\leftrightarrow x)P \mid x?P \mid {!}P \mid
+P\mid Q \mid \mathsf{new}~x~\mathsf{in}~\{P\}$,
+names $x,y ::= @P$, and atoms/terms $t,u ::= \mathit{atom} \mid ([t])$.
+Reduction is generated by structural congruence, parallel, and the single-step
+synchronization (\textsc{Comm}):
+\[
+  \frac{\sigma = \mathsf{unify}(t,u)}{\mathsf{for}(t\leftrightarrow x)P \;\mid\;
+  \mathsf{for}(u\leftrightarrow x)Q \;\longrightarrow\; P\sigma^{\bullet} \mid Q\sigma^{\bullet}}
+  \qquad(\textsc{Comm})
+\]
+where $\sigma^{\bullet}$ replaces variable$\to$process bindings with variable$\to$name
+bindings. Intuitively, $\mathsf{for}(t\leftrightarrow x)P$ offers a guarded
+continuation at ``space/tag'' $x$ that fires when some $u$ unifies with $t$.
+
+\subsection{Distinguished spaces and an ``emit'' macro}
+We use four distinguished names to mirror the machine registers:
+$\mathsf{I},\mathsf{K},\mathsf{W},\mathsf{O}$.
+We write
+\[
+  \mathsf{emit}(X,a) \;\triangleq\; \mathsf{for}(a\leftrightarrow X)~0
+\]
+to ``tag'' an atom $a$ into the space $X$.\footnote{As in the calculus,
+``spaces = tags'': membership is represented by the presence of guarded offers
+at the space/tag, not a container structure.}
+Uninterpreted ground effects (I/O, host calls) are treated as ground processes $G$.
+
+\subsection{Compilation of program items to processes}
+Let $[\![~\cdot~]\!]$ produce a calculus process.
+
+\paragraph{Facts and equalities in $K$.}
+A fact $a@\Sigma$ is compiled to a (by default, persistent) offer at $\Sigma$:
+\[
+  [\![~a@\Sigma~]\!] \;=\; {!}~\mathsf{emit}(\Sigma,a).
+\]
+A bidirectional equality $(=~t~u)$ yields two rewrite offers anchored at a
+distinguished rule space $\mathsf{Eq}$, each re-emitting its right-hand side to
+the workspace:
+\[
+  [\![~(=~t~u)~]\!] \;=\;
+  {!}~\big(\mathsf{for}(t\leftrightarrow \mathsf{Eq})~\mathsf{emit}(\mathsf{W},u)\big)
+  \;\mid\;
+  {!}~\big(\mathsf{for}(u\leftrightarrow \mathsf{Eq})~\mathsf{emit}(\mathsf{W},t)\big).
+\]
+Directed rules $(=>~t~u)$ are compiled with only the first clause.
+
+\paragraph{Top-level requests}
+A request injects $e$ into the input and posts a driver that asks for its value:
+\[
+  [\![~{!}~e~]\!] \;=\; \mathsf{emit}(\mathsf{I},e)
+  \;\mid\; \mathsf{for}(e\leftrightarrow \mathsf{I})~\mathsf{for}(e\leftrightarrow \mathsf{Eval})~0,
+\]
+where $\mathsf{Eval}$ is the evaluation space (see Query/Chain below).
+Other top-level space operations are compiled as below.
+
+\subsection{Reading the machine rules through \textsc{Comm}}
+\paragraph{Query/Chain.}
+The machine steps
+\emph{Query} and \emph{Chain} (Sec.~3.4) rewrite a redex against equalities in $K$,
+pushing results to $W$.
+In the calculus, we put redexes in $\mathsf{Eval}$ and rules in $\mathsf{Eq}$:
+\[
+  \underbrace{\mathsf{for}(t'\leftrightarrow \mathsf{Eval})~0}_{\text{the redex}}
+  \;\mid\;
+  \underbrace{\mathsf{for}(t\leftrightarrow \mathsf{Eq})~\mathsf{emit}(\mathsf{W},u)}_{\text{the rule}}
+  \;\;\Longrightarrow\;\; \mathsf{emit}(\mathsf{W},u\sigma),
+  \quad \sigma=\mathsf{unify}(t',t).
+\]
+Thus a \textsc{Comm} step \emph{is} Query/Chain; repeated use yields the usual
+rewrite closure into $\mathsf{W}$.
+
+\paragraph{Transform.}
+Machine \emph{Transform} matches a pattern $t$ against facts in a space $\Sigma$ and emits $u\sigma$.
+Compile facts as $!~\mathsf{emit}(\Sigma,a)$ and the transform request as
+$\mathsf{for}(t\leftrightarrow \Sigma)~\mathsf{emit}(\mathsf{W},u)$.
+A single \textsc{Comm} produces $\mathsf{emit}(\mathsf{W},u\sigma)$.
+
+\paragraph{Output and ``insensitive''.}
+The machine moves an item from $W$ to $O$ when it is \emph{insensitive} to $K$
+(no left-hand side unifies). In the calculus, this is realized by a policy:
+drivers only re-emit to $\mathsf{O}$ after no further $\mathsf{Eq}$-synchronization applies.
+Formally this is a fairness/strategy condition; observationally, both models
+output the same normal forms up to permutation.
+
+\subsection{Special forms and library heads}
+All surface heads are realized as ordinary rewrite programs over $\mathsf{Eq}$.
+In particular (non-strict positions preserved by using atoms as data):
+\[
+\begin{array}{ll}
+(\mathsf{if}~\mathsf{True}~a~b)\Rightarrow a, \qquad
+(\mathsf{if}~\mathsf{False}~a~b)\Rightarrow b,\\[2pt]
+(\mathsf{let}~p~e~a)\Rightarrow a\sigma\quad \text{when }e\Rightarrow v,\ \sigma=\mathsf{unify}(p,v),\\[2pt]
+(\mathsf{case}~e~((p_i~r_i)\ldots))\Rightarrow r_j\sigma \text{ for the first matching }p_j,\\[2pt]
+(\mathsf{match}~\Sigma~p~r)\Rightarrow r\sigma \text{ via } \mathsf{for}(p\leftrightarrow \Sigma)~\mathsf{emit}(\mathsf{W},r).
+\end{array}
+\]
+Each clause is installed as $\mathsf{for}(\_\leftrightarrow \mathsf{Eq})$-offers that re-emit to $\mathsf{W}$,
+exactly as above.
+
+\paragraph{Nondeterminism.}
+$\mathsf{superpose}(a_1,\ldots,a_n)$ compiles to parallel emissions
+$\mathsf{emit}(\mathsf{W},a_1)\mid\cdots\mid\mathsf{emit}(\mathsf{W},a_n)$.
+$\mathsf{collapse}~e$ uses fork--join: spawn the branches of $e$ and collect
+their results into a tuple using a fresh collector name $c$ and a join-pattern
+that waits for the end-of-stream marker (omitted here for brevity); the result
+is emitted to $\mathsf{W}$.
+Either way, \textsc{Comm} explores the same nondeterministic frontier as the machine.
+
+\paragraph{Expression-structure ops.}
+$\mathsf{car}\text{-}\mathsf{atom},\mathsf{cdr}\text{-}\mathsf{atom},\mathsf{cons}\text{-}\mathsf{atom}$ are ordinary grounders; they appear as
+ground processes $G$ in the calculus and simply emit their result.
+
+\subsection{Spaces, modules, and tokens}
+\paragraph{Space API.}
+$\mathsf{new}\text{-}\mathsf{space}$ is $\mathsf{new}~\Sigma~\mathsf{in}~\{0\}$ and returns $\Sigma$.
+$\mathsf{add}\text{-}\mathsf{atom}~\Sigma~a$ installs (by policy) a persistent offer $!~\mathsf{emit}(\Sigma,a)$.
+$\mathsf{remove}\text{-}\mathsf{atom}~\Sigma~a$ withdraws one such guard; operationally this is a
+\textsc{Comm} with a non-replicated retractor (or, in a capability discipline,
+consumes one token authorizing the guard), returning unit.
+$\mathsf{get}\text{-}\mathsf{atoms}~\Sigma~p$ is just $\mathsf{for}(p\leftrightarrow \Sigma)$-driven emission.
+
+\paragraph{bind!/import!.}
+$\mathsf{bind!}~\&t~e$ evaluates $e$ to a name/value and thereafter uses that
+name as the token for a space or grounded object; in the calculus this is a local
+definition of a name (possibly via $\mathsf{new}$).
+$\mathsf{import!}$ installs the imported module's facts/rules as offers at a fresh
+space bound to $\&t$.
+
+\subsection{Sealed (alpha-conversion)}
+$\mathsf{sealed}((v_1 \ldots v_k)~t)$ freshens all variables in $t$ except
+those listed. In the calculus this is realized by generating fresh names via
+$\mathsf{new}$ and systematically renaming inside the quoted body before emission.
+Freshness linearizability follows from name generation discipline; this mirrors
+the machine's freshness service.
+
+\subsection{Grounded numerics, interop, and I/O}
+Numeric/relational heads are deterministic grounders $G$ that, when their
+arguments are values, emit a ground value. Python interop heads ($\mathsf{py}\text{-}\mathsf{atom}$,
+$\mathsf{py}\text{-}\mathsf{dot}$, keyword-call) are likewise grounders bridging to the host;
+exceptions/BadType become ordinary $\mathsf{Error}$ atoms that flow like data.
+
+\subsection{Errors and assertions}
+$\mathsf{Error}$ is an atom; strict positions propagate it eagerly (a rewrite to
+$\mathsf{Error}$), non-strict positions pass it as data until forced.
+Assertions are rewrites that compare (multi)sets of results
+and emit unit on success or an $\mathsf{Error}$ atom otherwise.
+
+\subsection{Concurrency and transactional reading}
+Placing facts/rules as space-tagged guards and using \textsc{Comm} gives a
+process interpretation of the machine's concurrent reading of spaces:
+facts act as persistent inputs; adds install guards; removes withdraw them.
+Each \textsc{Comm} is a tiny transaction in which both sides read from their
+peer and write their continuations, exactly matching the operational intent.
+
+\subsection{Correspondence (bisimulation up to scheduling)}
+Write $\mathit{Conf}$ for machine configurations and $\mathit{Proc}$ for calculus processes.
+Define $\mathit{Tr} : \mathit{Conf} \to \mathit{Proc}$ by compiling $I,K,W,O$ into offers at
+$\mathsf{I},\mathsf{K},\mathsf{W},\mathsf{O}$ and installing the driver policies described above.
+Then:
+
+\begin{theorem}[Step correspondence]
+For every machine step $S \to S'$ there is a finite calculus reduction
+$\mathit{Tr}(S) \;\Longrightarrow^{*}\; \mathit{Tr}(S')$.
+Conversely, every calculus \textsc{Comm} step arising from an $\mathsf{Eq}$ or
+space synchronization corresponds to a machine Query/Chain/Transform step on
+the same redex/rule/fact.
+\end{theorem}
+
+\begin{proof}[Sketch]
+Query/Chain/Transform are single \textsc{Comm} events between
+$\mathsf{Eval}/\mathsf{Eq}$ or $\Sigma$-tagged offers; their continuations re-emit into $\mathsf{W}$,
+matching the machine's target register.
+Grounders/I/O are local steps in both models.
+Nondeterminism is realized by parallel composition of independent \textsc{Comm}s,
+whose result ordering is unspecified in both models.
+Output/insensitive coincides under the normal-form emission policy.
+\end{proof}
+
+\paragraph{Takeaway.}
+The calculus refactors the machine rules down to one symmetric interaction law.
+Equalities, space queries, nondeterminism, sealing, interop and errors are
+all expressed as ordinary guarded offers on names, with the same observable
+results as the register-machine semantics.
+
+
+
+% --- Helper (safe if already defined) -------------------------------
+\providecommand{\emit}[2]{\textsf{for}(#2\leftrightarrow #1)\,0}
+
+\begin{figure*}[t]
+\centering
+\small
+\begin{tabular}{|p{.22\textwidth}|p{.56\textwidth}|p{.18\textwidth}|}
+\hline
+\textbf{Machine rule / op} & \textbf{MeTTa Calculus (COMM instance)} & \textbf{Effect / target}\\
+\hline
+\emph{Query} (I\,$\to$\,W via $K$) &
+$\textsf{for}(t'\!\leftrightarrow \mathsf{Eval})\,0 \ \mid\ \textsf{for}(t\!\leftrightarrow \mathsf{Eq})\,\emit{\mathsf{W}}{u}
+\ \longrightarrow\ \emit{\mathsf{W}}{u\sigma}$, where $\sigma=\mathsf{unify}(t',t)$
+& push to $\mathsf{W}$\\
+\hline
+\emph{Chain} (W\,closure via $K$) &
+$\textsf{for}(u\!\leftrightarrow \mathsf{Eval})\,0 \ \mid\ \textsf{for}(t\!\leftrightarrow \mathsf{Eq})\,\emit{\mathsf{W}}{v}
+\ \longrightarrow\ \emit{\mathsf{W}}{v\sigma}$ & keep in W\\
+\hline
+\emph{Transform} &
+$\textsf{for}(t\!\leftrightarrow \Sigma)\,\emit{\mathsf{W}}{u}
+\ \mid\ \textsf{for}(a\!\leftrightarrow \Sigma)\,0
+\ \longrightarrow\ \emit{\mathsf{W}}{u\sigma}$, $\sigma=\mathsf{unify}(t,a)$
+& pattern on space $\Sigma$\\
+\hline
+\emph{add-atom} &
+install a persistent offer: $\;!\,\emit{\Sigma}{a}$ & fact in $\Sigma$\\
+\hline
+\emph{remove-atom} &
+consume a non-replicated retractor against $\emit{\Sigma}{a}$ & withdraw 1 fact\\
+\hline
+\emph{get-atoms} &
+enumeration via $\textsf{for}(p\!\leftrightarrow \Sigma)\,\emit{\mathsf{W}}{p}$ firing against facts in $\Sigma$ & tuple in O\\
+\hline
+\emph{Output} (\textit{insensitive}) &
+policy: re-emit $w\in\mathsf{W}$ to $\mathsf{O}$ once no $\mathsf{Eq}$-sync applies & move W$\to$O\\
+\hline
+\emph{Nondet.\ superpose} &
+parallel emissions: $\emit{\mathsf{W}}{a_1}\mid\cdots\mid\emit{\mathsf{W}}{a_n}$ & many results\\
+\hline
+\emph{collapse} &
+fork?join sugar: collect branch results to one tuple, then $\emit{\mathsf{O}}{(r_1\ldots r_m)}$ & 1 tuple\\
+\hline
+\emph{sealed / freshness} &
+$\textsf{new }x\textsf{ in }\{P\}$ for fresh names; rename inside guarded body before emit & hygienic rename\\
+\hline
+\emph{bind!/import!} &
+bind fresh name to space/object; imported rules become offers at a bound space & env update\\
+\hline
+\end{tabular}
+\caption{Register-machine rules (Sec.\,3) as single or small families of MeTTa-Calculus \textsc{Comm} steps acting on tags-as-spaces. Equalities live at $\mathsf{Eq}$; redexes at $\mathsf{Eval}$; facts/rules at named spaces $\Sigma$; results flow to $\mathsf{W}$ then $\mathsf{O}$.}
+\label{fig:calc-map}
+\end{figure*}
+
+
+\section{MeTTa-IL: A Concrete Intermediate Language Schema}
+\label{sec:mettail-schema}
+
+This section provides a concrete MeTTa-IL (IL) schema suitable for
+transpilers and execution backends. It defines the textual program
+format used by the BNFC-based reference parser, the term constructors
+with types and strictness, and the edge (rewrite) families implementing
+the small-step semantics from Section~\ref{sec:operational}. 
+
+\subsection{Motivation and Scope}
+\label{sec:why-il-here}
+
+The MeTTaCycle architecture document describes IL from a systems
+perspective, showing its place in runtime modules and the broader AGI
+stack. This section serves a complementary language role:
+
+\begin{itemize}
+  \item Surface-to-IL bridge: shows exactly how constructs like
+        \texttt{let}, \texttt{case}, \texttt{match}, \texttt{sealed}, and
+        \texttt{progn} lower to IL forms.
+  \item Formal semantics: defines unification success and failure,
+        strictness rules, memoization scope for by-need arguments, and
+        error propagation.
+  \item Conformance criteria: provides a normative reference for engine
+        implementers to ensure alignment.
+  \item Tool support: gives precise, language-level descriptions for
+        programmers and tool builders.
+\end{itemize}
+
+\subsection{BNFC Textual IL Conventions}
+\label{sec:bnfc-text-il}
+
+The reference implementation parses IL with a BNFC-based textual grammar.
+We adopt the following conventions so examples here are runnable:
+
+\begin{itemize}
+  \item A program file is a sequence of items (declarations, rules,
+        commands), followed by a single period \texttt{.} that terminates
+        the file.
+  \item Top-level commands use leading directives:
+        \texttt{! e} to evaluate an expression \texttt{e},
+        and \texttt{? e} to run a query expression \texttt{e}.
+  \item S-expressions have the generic form \texttt{(head arg1 ... argn)}.
+        The first element is the head symbol by convention.
+  \item The head for removing an atom is \texttt{rem-atom} (not
+        \texttt{remove-atom}).
+  \item Boolean literals are \texttt{true} and \texttt{false}. Type names
+        use \texttt{Bool}, \texttt{Long}, \texttt{String}, etc.
+\end{itemize}
+
+These textual conventions are presentation-level; the operational rules
+below are independent of any specific parser.
+
+\subsection{Design Goals}
+
+\begin{itemize}
+  \item Executable: every IL program has precise small-step semantics
+        mirroring the register machine.
+  \item Transpilable: 1:1 lowering from surface MeTTa with no ambiguity
+        about strictness or contexts.
+  \item Host-agnostic: grounded calls (arithmetic, Python interop) are
+        abstracted; engines provide host implementations.
+  \item Modular: spaces and tokens are explicit at the IL level via
+        ordinary terms and top-level commands.
+\end{itemize}
+
+\subsection{Venus front-end pipeline (Modules to Graph IR)}
+\label{sec:venus-pipeline}
+
+To give the reader some understanding of the software context in which Metta-IL is
+operating, we summarize here the end-to-end pipeline for the \emph{Venus}
+module language (the non S-expression DSL used in files with extension
+\texttt{.module}), and clarifies how it feeds the same Abstract IL /
+GSLT graph used by backends.  This information regarding the code in the F1R3FLY GitHub repo is not strictly needed for understanding
+the MeTTa language, but is interesting for those who want to understand the software
+practicalities of the compilation of MeTTa into Metta-IL and then into operations on MORK
+and rholang and so forth.
+
+\paragraph{Input.}
+A Venus module is a BNFC-defined text format with top-level
+\texttt{Module} and nested \texttt{Theory} declarations. The language
+provides blocks for \texttt{Exports}, \texttt{Terms}, \texttt{Equations},
+\texttt{Replacements}, and \texttt{Rewrites}, plus theory instantiation
+and composition forms. This concrete syntax is distinct from the
+S-expression IL, but both target the same graph IR.
+
+\paragraph{Pass structure.}
+The front-end executes a small sequence of named passes over a shared
+context. Conceptually:
+
+\begin{lstlisting}
+Pass 1: LoadModules
+  - Parse the entry module (.module) and all imports
+  - Build a module-level index of theory declarations/instantiations
+
+Pass 2: FindFinalInst
+  - Select the final TheoryInst in the entry module as the pipeline root
+
+Pass 3: CheckInterpret
+  - Run well-formedness checks on the selected TheoryInst:
+    * label/category lookup
+    * variable-category consistency
+    * free-variable hygiene
+
+Pass 4: Interpret
+  - Evaluate the TheoryInst into a BasePres (base presentation):
+    * resolve imports, replacements, exports
+    * accumulate terms, equations, rewrites into a typed presentation
+
+Pass 5: DesugarBinders
+  - Lower binder sugar to explicit arrow categories
+  - Add desugared rules with mangled labels for canonical processing
+
+Pass 6 (optional): Hypercube
+  - Type-lift arrow/product categories into a first-order shape
+  - Extend rules with parameters for repeated LHS variables
+
+Pass 7: GenerateBNFC (presentation rendering)
+  - Monomorphize arrow/product categories into concrete labels
+  - Emit a normalized presentation where higher-order cats are flattened
+\end{lstlisting}
+
+\noindent
+Up to and including \textbf{BasePres}, we are still in the theory/presentation
+layer. The next step constructs the graph-structured IL (GSLT) used by
+backends.
+
+\paragraph{BasePres $\rightarrow$ Graph IR (GSLT).}
+After \texttt{Interpret} (and optional \texttt{Hypercube}), the front-end
+possesses a typed, desugared \texttt{BasePres} containing:
+\begin{itemize}
+  \item a finite signature of labels and their categories,
+  \item a set of equations and directed rewrites with consistent sorts,
+  \item replacements/exports resolved, and binders made explicit.
+\end{itemize}
+The graph builder then produces the GSLT graph:
+\begin{itemize}
+  \item nodes for term constructors, categories, and space parameters,
+  \item edges for rewrite families (Query/Chain/Transform, If/Let/Case,
+        Match/Add/Rem, Superpose/Collapse, etc.),
+  \item per-head strictness and non-strict contracts as edge context rules,
+  \item optional policy metadata (evaluation policy, sealed freshness).
+\end{itemize}
+This \emph{Graph IR} is the input to backends such as the Rholang
+emitter. In Section~\ref{sec:il-semantics} we give the small-step rules
+on the graph-level IL; both textual front-ends compile to this same form.
+
+\paragraph{Why two textual front-ends?}
+The toolchain supports:
+\begin{enumerate}
+  \item the \textbf{Venus module language} (this subsection), oriented to
+        theory construction and algebraic presentations; and
+  \item the \textbf{BNFC S-expression IL} (Section~\ref{sec:bnfc-text-il}),
+        oriented to a Lisp-like concrete IL with top-level \texttt{!}/\texttt{?}.
+\end{enumerate}
+They are alternative concrete syntaxes that compile to the same Abstract
+IL / GSLT graph. The operational semantics and conformance requirements
+apply at the graph level.
+
+\paragraph{Takeaway for implementers.}
+Engines and backends need only implement the graph IR. Front-end authors
+are free to accept either Venus modules or S-expression IL (or both), so
+long as they lower to the graph with the strictness and rewrite families
+specified in Sections~\ref{sec:il-semantics} and \ref{sec:lowering}.
+
+\paragraph{Takeaway for this paper.}
+For the purposes of this paper, as noted above, it seems OK to present MeTTa-IL using
+the BNFC S-expression syntax (Section~\ref{sec:bnfc-text-il}) as we do in the
+worked examples in Section~\ref{sec:il-examples-text}. The reference
+toolchain does include a non S-expression front-end (the Venus module
+language), but both front-ends compile to the same Abstract IL / GSLT
+graph that our formal semantics targets. In other words:
+
+\begin{itemize}
+  \item \textbf{S-expression IL} is an accepted, runnable concrete format
+        for IL programs (with top-level \texttt{!}/\texttt{?} items and a
+        final \texttt{.}); it is suitable for examples and interchange.
+  \item \textbf{Venus modules} provide a more explicitly-typed,
+        theory-oriented concrete format; they are also compiled to the
+        same graph IR before execution or code generation.
+\end{itemize}
+
+Readers should distinguish the \emph{textual} IL (S-expr or Venus) from
+the \emph{Abstract IL / Graph IR}, which is the common, typed execution
+model used by all backends. The small-step rules in this paper are
+defined for the graph-level IL, independent of whichever textual
+front-end a tool or programmer prefers.
+
+\subsection{Textual Program Format (BNFC-compatible)}
+\label{sec:program-format}
+
+A MeTTa-IL program file is a list of items followed by a period:
+
+\begin{lstlisting}
+Program ::= { Item } "."
+Item    ::= KBItem | TopCmd
+
+TopCmd  ::= "!" Expr         ; evaluate expression
+         |  "?" Expr         ; query expression
+
+KBItem  ::= TypeDecl         ; (: f T)
+         |  Eq               ; (= lhs rhs)
+         |  EqDir            ; (=> lhs rhs)
+	| BindSym   ::= "(bind! " Sym " " Expr ")"
+         | ImportSym ::= "(import! " Sym " " Sym ")"
+         |  SpaceOp          ; (add-atom S a), (rem-atom S a), (match S p r)
+         |  FactAt           ; (fact@ S a)   ; optional, if supported
+
+TypeDecl ::= "(: " Sym Type ")"
+Eq       ::= "(= " Term " " Term ")"
+EqDir    ::= "(=> " Term " " Term ")"
+
+SpaceOp  ::= "(add-atom " Space " " Term ")"
+          |  "(rem-atom " Space " " Term ")"
+          |  "(match " Space " " Atom " " Atom ")"
+
+BindTok  ::= "(bind! " Tok " " Expr ")"
+ImportTok::= "(import! " Tok " " Sym ")"
+\end{lstlisting}
+
+Notes:
+(i) \texttt{Space} is typically introduced by binding a symbol to
+\texttt{(new-space)} via \texttt{(bind! S (new-space))}.
+(ii) The grammar admits generic S-expressions \texttt{(head ...)}; the
+semantics below assigns meaning to the designated heads.
+
+\subsection{Core Structure (Abstract)}
+\label{sec:core-structure}
+
+\subsubsection{Sorts and Base Types}
+
+We use the following abstract sorts in the semantics:
+\[
+\mathsf{Sym},\ \mathsf{Var},\ \mathsf{Space},\ \mathsf{Ty},\
+\mathsf{Ground},\ \mathsf{Term},\ \mathsf{Tuple},\ \mathsf{Bool},\
+\mathsf{Num},\ \mathsf{Str},\ \mathsf{Unit}
+\]
+plus a meta-level multiset type for machine registers.
+
+\subsection{Term Constructors and Strictness}
+\label{s:terms}
+
+The following constructors are referenced by the semantics. "Strict"
+means the argument is evaluated before the rule fires. "Atom" means the
+argument is passed unreduced.
+
+\subsubsection{Core Data and Application}
+
+\begin{lstlisting}
+(sym   : String -> Sym)              ; symbols
+(var   : String -> Var)              ; variables (patterns only)
+(num   : Int64  -> Num)              ; numbers
+(str   : String -> Str)              ; strings
+(bool  : Bool   -> Bool)             ; booleans (true/false literals)
+(unit  :        -> Unit)             ; unit value
+(tuple : [Term] -> Tuple)            ; tuples
+
+(app   : Term {Term} -> Term)        ; application (strict)
+(quote : Term -> Term)               ; quotation (Atom)
+\end{lstlisting}
+
+\subsubsection{Equations and Rules}
+
+\begin{lstlisting}
+(=     : Term Term -> Term)          ; bidirectional equality
+(=>    : Term Term -> Term)          ; directed (forward-only) rule
+\end{lstlisting}
+
+\subsubsection{Control Forms}
+
+\begin{lstlisting}
+(if    : Bool Atom Atom -> Term)     ; strict: 1, non-strict: 2,3
+(let   : Pat  Term Atom -> Term)     ; strict: 2, non-strict: 1,3
+(case  : Term [(Pat Atom)] -> Term)  ; strict: scrutinee
+(transform : Term Term -> Term)      ; both strict
+(progn : {Term} -> Term)             ; strict left-to-right, returns last
+\end{lstlisting}
+
+\subsubsection{Nondeterminism}
+
+\begin{lstlisting}
+(superpose : Tuple -> Term)          ; Atom: elements unreduced
+(collapse  : Term  -> Term)          ; Atom: argument unreduced
+(empty     :        -> Term)         ; yields no result
+\end{lstlisting}
+
+\subsubsection{Spaces and Queries}
+
+\begin{lstlisting}
+(match     : Space Atom  Atom -> Term) ; non-strict: 2,3
+(add-atom  : Space Atom  -> Term)      ; Atom: added as-is, returns unit
+(rem-atom  : Space Atom  -> Term)      ; returns unit (even if absent)
+(get-atoms : Space Pat   -> Term)      ; returns tuple
+(add-reduct: Space Term  -> Term)      ; strict: 2 (adds reduced form)
+\end{lstlisting}
+
+\subsubsection{Sealing and Interop}
+
+\begin{lstlisting}
+(sealed : [Var] Atom -> Term)        ; Atom: body; freshens vars not listed
+
+(py-atom : Str [Ty] -> Ground)       ; import a Python object
+(py-dot  : Ground Sym -> Ground)     ; attribute access
+(kwargs  : [(Sym Term)] -> Term)     ; keyword arguments bundle
+\end{lstlisting}
+
+\subsubsection{Assertions and Diagnostics}
+
+\begin{lstlisting}
+(assertEq  : Term Term  -> Term)     ; compare result sets
+(assertEqr : Term Tuple -> Term)     ; compare to literal tuple
+(println!  : Atom -> Unit)           ; console print (strict)
+(trace!    : Atom -> Unit)           ; console trace (strict)
+\end{lstlisting}
+
+\subsubsection{Patterns}
+
+Patterns appear in \texttt{=}, \texttt{=>}, \texttt{let}, \texttt{case},
+\texttt{match}, and \texttt{get-atoms}:
+
+\begin{lstlisting}
+Pat ::= (p-var <string>) | (p-sym <string>) | (p-num <int>)
+      | (p-str <string>) | (p-bool <bool>) | (p-unit)
+      | (p-space <sym>)  | (p-app Pat {Pat})
+\end{lstlisting}
+
+\subsection{Operational Semantics (Edge Families)}
+\label{sec:il-semantics}
+
+We use the Meta-MeTTa style four-register machine
+\(\langle I, K, W, O \rangle\) and small-step rules. The predicate
+\(\mathrm{insensitive}(t,K)\) is defined as:
+\[
+\mathrm{insensitive}(t,K) \;:\Longleftrightarrow\;
+\forall(=\,t_i\,u_i)\in K.\ \mathrm{unify}(t,t_i)\ \text{fails}.
+\]
+
+\subsubsection{Core Rewriting}
+
+\paragraph{Query and Chain.}
+E\_Query applies equalities from input:
+unify redex \(t'\) with each left-hand side and produce \(u_i\sigma\) for
+all unifiers \(\sigma\), provided \(\mathrm{insensitive}(t',K)\).
+E\_Chain is identical on workspace items.
+
+\paragraph{Transform.}
+E\_Transform: \((transform\ t\ u)\) matches \(t\) against facts and
+emits \(u\sigma\) for each match.
+
+\subsubsection{Spaces}
+
+\begin{itemize}
+  \item E\_Add: \((add\text{-}atom\ \Sigma\ a) \to ()\), adds \(a@\Sigma\) unreduced.
+  \item E\_AddReduct: \((add\text{-}reduct\ \Sigma\ e) \to ()\), adds the reduced value of \(e\).
+  \item E\_Remove: \((rem\text{-}atom\ \Sigma\ a) \to ()\), removes one \(a@\Sigma\) if present.
+  \item E\_Get: \((get\text{-}atoms\ \Sigma\ p) \to (m_1 \ldots m_k)\) with \(m_i=a\sigma\).
+  \item E\_Match: \((match\ \Sigma\ p_{in}\ p_{out}) \to p_{out}\sigma\) for each unifier \(\sigma\).
+\end{itemize}
+
+\subsubsection{Control Flow}
+
+\begin{itemize}
+  \item E\_IfTrue / E\_IfFalse: branch on boolean condition.
+  \item E\_Let: evaluate \(e\), unify with \(p\), reduce to \(a\sigma\) on success; otherwise empty.
+  \item E\_Case: sequential first-match semantics.
+  \item E\_Progn: strict left-to-right evaluation; result is the last value.
+  \item E\_Quote: value constructor that prevents inner evaluation.
+\end{itemize}
+
+\subsubsection{Nondeterminism}
+
+\begin{itemize}
+  \item E\_Superpose: \((superpose\ (a_1 ... a_n))\) yields \(n\) successors.
+  \item E\_Collapse: collects all results of \(e\) into a single tuple.
+  \item E\_Empty: produces no result.
+\end{itemize}
+
+\subsubsection{Sealed, Output}
+
+\begin{itemize}
+  \item E\_Seal: alpha-conversion using a linearizable freshness service \(\nu\).
+  \item E\_Output: move an insensitive item from \(W\) to \(O\).
+\end{itemize}
+
+\subsubsection{Python Interop}
+
+\begin{itemize}
+  \item E\_PyAtom: \((py\text{-}atom\ s\ [T]) \to\) grounded object.
+  \item E\_PyDot: \((py\text{-}dot\ g\ a) \to\) attribute value.
+  \item E\_GCall: calling a grounded value with positional and keyword args.
+  \item Host exceptions map to \((Error\ py-exn\ ...)\) and do not mutate \(K\) or tokens.
+\end{itemize}
+
+\subsubsection{Assertions and Errors}
+
+\begin{itemize}
+  \item E\_AssertEq: compare multisets of results; return unit or \((Error ...)\).
+  \item E\_AssertEqr: compare to a literal tuple (treated as a value).
+\end{itemize}
+
+\subsection{Lowering from Surface to IL}
+\label{sec:lowering}
+
+Let \(\mathcal{L}\llbracket\cdot\rrbracket\) translate surface terms and
+\(\mathcal{P}\llbracket\cdot\rrbracket\) translate patterns. Lowering
+preserves non-strict positions.
+
+\subsubsection{Pattern Translation}
+
+\begin{align*}
+\mathcal{P}\llbracket \$x \rrbracket &= (p\text{-}var\ \texttt{"x"}) \\
+\mathcal{P}\llbracket s \rrbracket   &= (p\text{-}sym\ \texttt{"s"}) \\
+\mathcal{P}\llbracket n \rrbracket   &= (p\text{-}num\ n) \\
+\mathcal{P}\llbracket (t_0\ \ldots\ t_k) \rrbracket
+  &= (p\text{-}app\ \mathcal{P}\llbracket t_0\rrbracket\ \ldots\ \mathcal{P}\llbracket t_k\rrbracket)
+\end{align*}
+
+\subsubsection{Control Forms}
+
+\paragraph{Let.}
+\[
+\mathcal{L}\llbracket (let\ p\ e\ a) \rrbracket
+= (let\ \mathcal{P}\llbracket p\rrbracket\ \mathcal{L}\llbracket e\rrbracket\ \mathcal{L}\llbracket a\rrbracket)
+\]
+IL step: evaluate \(e\), unify with \(p\); on success reduce to \(a\sigma\);
+on failure produce no result.
+
+\paragraph{Case.}
+\[
+\mathcal{L}\llbracket (case\ e\ ((p_1 r_1)\ldots)) \rrbracket
+= (case\ \mathcal{L}\llbracket e\rrbracket\ ((\mathcal{P}\llbracket p_1\rrbracket\ \mathcal{L}\llbracket r_1\rrbracket)\ldots))
+\]
+
+\paragraph{Progn (sequential composition).}
+\[
+\mathcal{L}\llbracket (progn\ e_1\ldots e_n) \rrbracket =
+\begin{cases}
+\mathcal{L}\llbracket e_1\rrbracket & n=1 \\
+(let\ (p\text{-}var\ \texttt{"\_tmp"})\ \mathcal{L}\llbracket e_1\rrbracket\
+   \mathcal{L}\llbracket (progn\ e_2\ldots e_n) \rrbracket) & n>1
+\end{cases}
+\]
+
+\subsubsection{Other Forms}
+
+\begin{align*}
+\mathcal{L}\llbracket (match\ \Sigma\ p\ r) \rrbracket
+  &= (match\ \mathcal{L}\llbracket \Sigma\rrbracket\ \mathcal{P}\llbracket p\rrbracket\ \mathcal{L}\llbracket r\rrbracket) \\
+\mathcal{L}\llbracket (quote\ a) \rrbracket
+  &= (quote\ \mathcal{L}\llbracket a\rrbracket) \\
+\mathcal{L}\llbracket (sealed\ (v_1\ldots)\ t) \rrbracket
+  &= (sealed\ ((var\ \texttt{"v1"})\ldots)\ \mathcal{L}\llbracket t\rrbracket)
+\end{align*}
+
+\subsubsection{Grounded Operators}
+\label{sec:il-grounders}
+
+Grounded calls lower to ordinary applications:
+\[
+\mathcal{L}\llbracket (+\ e_1\ e_2) \rrbracket
+\;=\; (app\ (sym\ \texttt{"+"})\ \mathcal{L}\llbracket e_1\rrbracket\ \mathcal{L}\llbracket e_2\rrbracket)
+\]
+Reduction is handled by grounder edge families (numeric, relational, I/O).
+
+\subsection{Strictness Table}
+
+Non-strict positions for special forms:
+
+\begin{center}
+\begin{tabular}{|l|l|}
+\hline
+Constructor   & Non-strict positions \\
+\hline
+\texttt{if}         & 2, 3 (branches) \\
+\texttt{let}        & 1, 3 (pattern, body) \\
+\texttt{case}       & branch results \\
+\texttt{match}      & 2, 3 (pattern and result) \\
+\texttt{quote}      & 1 (body) \\
+\texttt{superpose}  & tuple elements \\
+\texttt{collapse}   & 1 (expression) \\
+\texttt{sealed}     & 1 (var list), 2 (body) \\
+\texttt{assertEqr}  & 2 (literal tuple) \\
+\texttt{progn}      & none (strict left-to-right) \\
+\hline
+\end{tabular}
+\end{center}
+
+All other constructors evaluate arguments before their rule fires.
+
+\subsection{Static Well-Formedness}
+
+\begin{itemize}
+  \item KB items: \texttt{(: f T)}, \texttt{(= l r)}, \texttt{(=> l r)},
+        token binds, imports, and space operations are permitted.
+  \item Patterns: variables appear only as \texttt{p-var} nodes.
+  \item Spaces: every \texttt{match/add-atom/rem-atom/get-atoms/add-reduct}
+        references a space reachable from the current program context.
+  \item Tokens: token names are unique within a program file.
+  \item Types: grounded objects may carry types; mismatch yields
+        \texttt{BadType} or an \texttt{Error} atom.
+\end{itemize}
+
+\subsection{Conformance}
+
+An IL-conformant engine must:
+\begin{enumerate}
+  \item Accept the textual program format in Sec.~\ref{sec:program-format}.
+  \item Implement all edge families with the strictness contracts above.
+  \item Treat \texttt{Error} as a user-level symbol (no exceptions).
+  \item Preserve nondeterminism semantics (order is unspecified unless
+        a deterministic profile is advertised).
+  \item Handle \texttt{=>} either as a directed rule or diagnose it
+        clearly if unsupported.
+\end{enumerate}
+
+\subsection{Worked Micro-Examples (Textual IL)}
+\label{sec:il-examples-text}
+
+All examples below follow the BNFC textual conventions (top-level
+\texttt{!} and \texttt{?}, final \texttt{.}).
+
+\paragraph{Equality and call.}
+\begin{lstlisting}
+(: inc (-> Long Long))
+(= (inc $x) (+ $x 1))
+
+! (inc 2)
+.
+\end{lstlisting}
+
+\paragraph{Match over a space.}
+\begin{lstlisting}
+(bind! &S (new-space))
+
+! (add-atom &S (Parent Tom Bob))
+? (match &S (Parent $x Bob) $x)
+.
+\end{lstlisting}
+
+\paragraph{Sealed.}
+\begin{lstlisting}
+! (sealed ($x)
+          (Cons $x (Cons $y Nil)))
+.
+\end{lstlisting}
+
+\paragraph{Superpose and collapse.}
+\begin{lstlisting}
+(= (color) red)
+(= (color) green)
+(= (color) blue)
+
+! (collapse (color))
+.
+\end{lstlisting}
+
+\paragraph{Python interop with kwargs.}
+\begin{lstlisting}
+(bind! &np (py-atom "numpy"))
+! ((py-dot &np arange)
+   (kwargs (start 2) (stop 10) (step 3)))
+.
+\end{lstlisting}
+
+
+\subsection{From MeTTa Calculus to MeTTa-IL (one-step view)}
+\label{subsec:calc-to-il}
+
+We now briefly summarize how the mapping to MeTTa-IL plays with the MeTTa Calculus formulation.
+
+Here spaces are names; facts/rules are guarded offers; \textsc{Comm} is a tiny transaction. The IL captures each such transaction with a small family of edges (Query/Chain/Transform/Add/Rem/Get/Match/Output) over explicit constructors. Concretely:
+\begin{itemize}
+  \item \textbf{Equality at $\mathsf{Eq}$.} A calculus offer $\textsf{for}((f~\vec{p})\!\leftrightarrow \mathsf{Eq})\,\emit{\mathsf{W}}{r}$ becomes an IL equation $(=~(f~\vec{p})~r)$. Firing corresponds to E\,Query/E\,Chain (Sec.\,4.8.1), delivering $r\sigma$ to the workspace/output.%
+  \item \textbf{Space match $\Sigma$.} $\textsf{for}(p\!\leftrightarrow \Sigma)\,\emit{\mathsf{W}}{r}$ becomes $(\texttt{match}~\Sigma~p~r)$ with E\,Match (Sec.\,4.8.2).
+  \item \textbf{Facts.} A persistent calculus fact $!\,\emit{\Sigma}{a}$ corresponds to $(\texttt{add-atom}~\Sigma~a)$; withdrawal to $(\texttt{rem-atom}~\Sigma~a)$ (E\,Add/E\,Remove).
+  \item \textbf{Get/collapse.} Enumeration via E\,Get; collection via E\,Collapse (Sec.\,4.8.4).
+  \item \textbf{Freshness/sealed.} $\textsf{new}$ and capture?avoidance compile to IL \texttt{sealed} (E\,Seal, Sec.\,4.8.5) and, for spaces, to \texttt{new-space}+binding (Sec.\,4.7.5, 3.6.6).
+  \item \textbf{Output.} The calculus? "insensitive then re?emit to $\mathsf{O}$" is IL?s E\,Output (Sec.\,4.8.5).
+  \item \textbf{Grounders/interop.} Calculus ground processes $G$ map to IL grounded calls (numeric/relational/I/O and Python) with the dedicated edge families (Sec.\,4.8.6).
+\end{itemize}
+
+\paragraph{Equivalence intuition (bisimulation up to scheduling).}
+Install (i) one calculus "driver" $\textsf{for}(\_\!\leftrightarrow \mathsf{Eval})$ for each redex and (ii) offers at $\mathsf{Eq}$ and spaces. Every machine step in Sec.\,3 corresponds to a finite sequence of \textsc{Comm}s that IL realizes by one edge firing; conversely, each IL edge firing mirrors a \textsc{Comm} between the corresponding offers. Thus observable results (modulo permutation of independent results) coincide.%
+\footnote{Machine small?step rules are in Sec.\,3.4?3.6; IL edges in Sec.\,4.8; the "spaces as tags" reading that makes \textsc{Comm} transactional is explicit in the calculus note (pp.\,2?5).}
+
+% Microtable: Calculus fragment  ->  Textual IL constructor  (+ edge family)
+\providecommand{\emit}[2]{\textsf{for}(#2\leftrightarrow #1)\,0}
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{|p{.42\textwidth}|p{.36\textwidth}|p{.18\textwidth}|}
+\hline
+\textbf{MeTTa Calculus fragment} & \textbf{Textual MeTTa?IL constructor} & \textbf{IL edge family} \\
+\hline
+\textit{Fact in space }$\Sigma$ (persistent): $\;{!}\,\emit{\Sigma}{a}$ 
+& \verb|(add-atom ? a)|
+& E\,Add (Spaces) \\
+\hline
+Withdraw one fact $a$ from $\Sigma$ (consume one guard) 
+& \verb|(rem-atom ? a)|\footnotemark
+& E\,Remove (Spaces) \\
+\hline
+Query a space: "match $p$ in $\Sigma$ then emit $r$" \quad
+$\textsf{for}(p\!\leftrightarrow\Sigma)\,\emit{\mathsf{W}}{r}$ 
+& \verb|(match ? p r)|
+& E\,Match (Spaces) \\
+\hline
+Enumerate matches of $p$ in $\Sigma$ \quad
+$\textsf{for}(p\!\leftrightarrow\Sigma)\,\emit{\mathsf{W}}{p}$ 
+& \verb|(get-atoms ? p)|
+& E\,Get (Spaces) \\
+\hline
+Bidirectional equality rule \quad
+$\textsf{for}(t\!\leftrightarrow \mathsf{Eq})\,\emit{\mathsf{W}}{u}\;\mid\;
+ \textsf{for}(u\!\leftrightarrow \mathsf{Eq})\,\emit{\mathsf{W}}{t}$ 
+& \verb|(= t u)|
+& E\,Query/E\,Chain (Core) \\
+\hline
+Directed rule (L?R only) \quad
+$\textsf{for}(t\!\leftrightarrow \mathsf{Eq})\,\emit{\mathsf{W}}{u}$ 
+& \verb|(=> t u)|
+& E\,Query/E\,Chain (L?R) \\
+\hline
+General "transform" (pattern on facts, produce $u\sigma$) \quad
+$\textsf{for}(t\!\leftrightarrow\Sigma)\,\emit{\mathsf{W}}{u}$ 
+& \verb|(transform t u)|
+& E\,Transform \\
+\hline
+Evaluate redex via rules (Query/Chain) \quad
+$\textsf{for}(t'\!\leftrightarrow \mathsf{Eval})\,0 \;\mid\;
+ \textsf{for}(t\!\leftrightarrow \mathsf{Eq})\,\emit{\mathsf{W}}{u}
+ \;\to\; \emit{\mathsf{W}}{u\sigma}$ 
+& \emph{(implicit; no extra constructor)} 
+& E\,Query/E\,Chain (Core) \\
+\hline
+Nondeterministic choice (parallel emissions) \quad
+$\emit{\mathsf{W}}{a_1}\mid\cdots\mid\emit{\mathsf{W}}{a_n}$ 
+& \verb|(superpose (a1 ... an))|
+& E\,Superpose \\
+\hline
+Materialize all results of $e$ as one tuple (fork?join) 
+& \verb|(collapse e)|
+& E\,Collapse \\
+\hline
+Alpha?conversion (freshen all vars except listed) 
+& \verb|(sealed ($v1 ... $vk) t)|
+& E\,Seal \\
+\hline
+Fresh space value (private channel/name) \quad
+$\textsf{new }\Sigma\textsf{ in }\{P\}$ (yields a fresh $\Sigma$) 
+& \verb|(new-space)|
+& Grounder (Spaces) \\
+\hline
+Grounded operator (host call / arithmetic / I/O) \quad
+$G(\vec{v})$ emits a ground value 
+& e.g. \verb|(+ e1 e2)|, \verb|(println! a)|
+& Grounders (4.8.6) \\
+\hline
+Replication (persistent guard) \quad ${!}\,\textsf{for}(t\!\leftrightarrow x)P$ 
+& \verb|(= ...)| (rules persist) or \verb|(add-atom ...)| (facts persist)
+& As above \\
+\hline
+\end{tabular}
+\caption{Side?by?side mapping. Calculus fragments use \textsf{for}(t$\leftrightarrow$x)P, replication ${!}$, and \textsf{new} with reductions by \textsc{Comm}; see the MeTTa?Calculus note (syntax, \textsc{Comm}, replication, \textsf{new}). The IL column uses the BNFC textual MeTTa?IL constructors and small?step edge families in Sec.\,4.7?4.8 of the spec.}
+\label{tab:calc-to-il}
+\end{table*}
+\footnotetext{In the BNFC textual IL the head is \texttt{rem-atom} (not \texttt{remove-atom}); see the IL conventions.}
+
+
+\section{User-Customizable Evaluation Order in MeTTa}
+
+\subsection{Overview and Motivation}
+
+This section proposes an extension to MeTTa that enables fine-grained, 
+per-symbol control over evaluation order and strictness. While MeTTa's 
+current model (strict for most arguments, non-strict for Atom-typed 
+parameters) works well in practice, certain use cases benefit from more 
+precise control:
+
+\begin{itemize}
+\item \textbf{Efficiency}: Implementing short-circuit evaluation without 
+      special forms
+\item \textbf{Laziness}: Supporting by-need evaluation with memoization for 
+      expensive computations
+\item \textbf{Parallelism}: Marking arguments that can be evaluated 
+      concurrently
+\item \textbf{Custom ordering}: Evaluating arguments in non-standard sequences
+      for semantic or performance reasons
+\end{itemize}
+
+The proposal adds:
+\begin{enumerate}
+\item A declarative syntax for specifying evaluation policies per symbol
+\item Minimal extensions to the operational semantics (thunks and forcing)
+\item Corresponding IL support with backward compatibility
+\end{enumerate}
+
+\textbf{Key principle}: This is an opt-in extension. Programs without 
+evaluation policies behave exactly as before.
+
+\subsection{Surface Syntax}
+
+\subsubsection{Evaluation Policy Declarations}
+
+We introduce a single declaration form:
+
+\begin{lstlisting}
+EvalDecl ::= '(' 'eval-policy' Target EvalSpec ')'
+
+Target   ::= Symbol                    ; the function being configured
+
+EvalSpec ::= '(' 'args' { Mode } ')'   ; one Mode per positional arg
+           [ '(' 'order' Order ')' ]    ; evaluation sequence
+           [ '(' 'result' Mode ')' ]    ; result normalization
+           [ '(' 'parallel' { Nat } ')' ]; concurrent evaluation hints
+           [ '(' 'name' { Nat } ')' ]    ; shorthand for by-name args
+           [ '(' 'need' { Nat } ')' ]    ; shorthand for by-need args
+
+Mode     ::= 'val' | 'name' | 'need'   
+Order    ::= 'ltr' | 'rtl' | '(' 'custom' { Nat } ')'
+\end{lstlisting}
+
+\subsubsection{Evaluation Modes}
+
+\begin{itemize}
+\item \textbf{val} (by-value): Evaluate argument before the call (strict)
+\item \textbf{name} (by-name): Pass unreduced, never force at call site
+\item \textbf{need} (by-need): Pass as thunk, force on demand with memoization
+\end{itemize}
+
+\subsubsection{Examples}
+
+\begin{lstlisting}
+; Document default 'if' behavior explicitly
+(eval-policy if (args val name name) (order ltr))
+
+; All-strict function with left-to-right evaluation
+(eval-policy f+ (args val val val) (order ltr))
+
+; Lazy map: function passed syntactically, list evaluated
+(eval-policy map (args name val) (order ltr))
+
+; Short-circuit 'and': both lazy, force as needed
+(eval-policy my-and (args need need) (order ltr))
+
+; Parallel evaluation hint: args 2 and 3 can run concurrently
+(eval-policy g (args val val val) 
+               (order custom 2 3 1) 
+               (parallel 2 3))
+\end{lstlisting}
+
+\subsection{Operational Semantics}
+
+\subsubsection{Extended Machine State}
+
+We extend the register machine with:
+\begin{itemize}
+\item A policy table $\Pi$ mapping symbols to their evaluation policies
+\item A thunk store $\mu$ for by-need memoization (conceptual; implementations
+      may use graph annotation)
+\end{itemize}
+
+State becomes: $\langle I, K, W, O \mid \vartheta, \mathcal{M}, \nu, \Pi, \mu \rangle$
+
+\subsubsection{Policy Structure}
+
+For symbol $f$:
+\[
+\Pi(f) = (\text{modes} = \langle m_1, \ldots, m_n \rangle, 
+          \text{order} = o, 
+          \text{parallel} = P \subseteq \{1..n\}, 
+          \text{result} = m_{res})
+\]
+
+\subsubsection{Argument Preparation Phase}
+
+For application $f(t_1, \ldots, t_n)$ with policy $\Pi(f)$:
+
+\begin{enumerate}
+\item \textbf{Schedule}: Determine evaluation order from policy
+\item \textbf{Prepare}: For each argument position $i$ in order $o$:
+  \begin{itemize}
+  \item If $m_i = \text{val}$: Evaluate $t_i \to^* v_i$ to normal form
+  \item If $m_i = \text{need}$: Wrap as $\text{delay}(t_i)$ (thunk)
+  \item If $m_i = \text{name}$: Leave $t_i$ unreduced
+  \end{itemize}
+\item \textbf{Parallelize}: Arguments in set $P$ may be evaluated concurrently
+\item \textbf{Apply}: Use prepared arguments $\vec{t}^{\star}$ in standard 
+      Query/Chain
+\end{enumerate}
+
+\subsubsection{Thunk Semantics (By-Need)}
+
+\paragraph{Delay and force operations.}
+\begin{itemize}
+\item $\text{delay}(e)$ creates thunk with fresh label $\alpha$, 
+      stores $\mu[\alpha] = \text{Uneval}(e)$
+\item First force: $\text{force}(\text{thunk}\,\alpha)$ evaluates $e \to^* v$, 
+      updates $\mu[\alpha] := \text{Val}(v)$, returns $v$
+\item Subsequent forces: Return memoized $v$ from $\mu[\alpha]$
+\end{itemize}
+
+\paragraph{Memoization scope.}
+\label{sec:need-memo-scope}
+Memoization is per-thunk-node and per-nondeterministic-branch. The same
+thunk forced twice in one branch returns the cached value. Different thunk
+nodes don't share results. When computation branches nondeterministically,
+each branch maintains its own memo table.
+
+\subsubsection{Result Policy}
+
+If $\Pi(f).\text{result} = \text{val}$, normalize the result $u \to^* v$ 
+before enqueueing. Default is \texttt{name} (no normalization).
+
+\subsubsection{Policy Precedence and Special Cases}
+\label{sec:policy-precedence}
+
+\paragraph{Precedence rules:}
+\begin{enumerate}
+\item Head-specific \texttt{eval-policy} overrides type-based defaults
+\item Last declaration wins within a module (tools should warn)
+\item Special forms' non-strict contracts are normative unless explicitly 
+      overridden
+\end{enumerate}
+
+\paragraph{Higher-order calls.}
+Policies apply to the \emph{runtime head} after reduction. No policy 
+composition or merging occurs. The head symbol or grounded operator 
+determines the policy.
+
+\paragraph{Interaction with nondeterminism.}
+\label{sec:nd-vs-order}
+When preparing arguments encounters nondeterminism (e.g., \texttt{superpose}),
+branches are explored at that point before the callee's rewrite. Result sets
+are unchanged (up to permutation), but observable effects may reflect the
+chosen order.
+
+\subsection{Design Principles}
+
+\begin{itemize}
+\item \textbf{Local and explicit}: Policies are per-symbol, not global
+\item \textbf{Backward compatible}: No policy means current behavior
+\item \textbf{Sound with unification}: 
+  \begin{itemize}
+  \item \texttt{val} arguments unify against evaluated forms
+  \item \texttt{name} arguments unify against surface terms
+  \item \texttt{need} arguments unify against thunks (force when needed)
+  \end{itemize}
+\item \textbf{Parallelism as permission}: The \texttt{parallel} annotation
+      authorizes interleaving; sequential execution remains compliant
+\item \textbf{Portability note}: Custom evaluation orders may expose 
+      non-confluence with side effects or space mutation
+\end{itemize}
+
+\subsection{IL Extension (BNFC textual IL)}
+\label{sec:il-eval-policy}
+
+This section gives a BNFC-compatible, textual IL presentation of the
+evaluation-policy extension (user-configurable argument modes and
+evaluation order), together with two new heads \texttt{delay} and
+\texttt{force}. All examples are in the S-expression IL used by the
+reference BNFC parser (top-level items; final dot).
+
+\subsubsection{Top-level policy declarations}
+\label{sec:il-policy-decls}
+
+Policies are ordinary top-level items; engines that do not implement the
+extension MUST still parse them and MAY ignore them at runtime.
+
+\begin{lstlisting}
+Item    ::= ... 
+         |  (policy <head>
+                 (args   <mode> ...)
+                 (order  <ord>)
+                 [ (parallel <i> <j> ...) ]
+                 [ (result <mode>) ])
+
+<mode>  ::= val | name | need
+<ord>   ::= ltr | rtl | (custom <i> <j> ... <k>)
+<head>  ::= a symbol naming the runtime head (e.g., my-and, pmap)
+<i>,<j> ::= 1-based argument positions; must be within arity
+\end{lstlisting}
+
+\noindent
+\textbf{Meaning.}
+\texttt{args} gives the per-parameter mode:
+\texttt{val} (strict, evaluate before call),
+\texttt{name} (pass unreduced),
+\texttt{need} (pass as thunk; force on demand).
+\texttt{order} selects left-to-right, right-to-left, or an explicit
+permutation.
+\texttt{parallel} lists argument positions that may be evaluated
+concurrently (subject to effects and fairness).
+\texttt{result} optionally states how to treat the result (\texttt{val}
+to normalize; \texttt{name} to leave as-is; \texttt{need} to return a
+thunk).
+
+\paragraph{Precedence.}
+If multiple policies are declared for the same head in one file, the
+last one wins. Special forms with normative non-strictness keep their
+behavior unless a tool explicitly opts in to override them.
+
+\subsubsection{New heads (textual IL)}
+\label{s:il-thunks}
+
+The extension introduces two ordinary heads:
+
+\begin{lstlisting}
+; Heads (no special syntax; ordinary S-expr calls)
+(delay e)    ; construct a thunk for e (no evaluation)
+(force x)    ; demand the value; memoize if x is a thunk
+\end{lstlisting}
+
+\noindent
+\textbf{Operational intent.}
+\texttt{(delay e)} is a value (no step). \texttt{(force (delay e))}
+forces \texttt{e} (under the current strategy), memoizes its value, and
+returns it; \texttt{(force v)} with non-thunk \texttt{v} is the identity.
+
+\subsubsection{Edge families (small-step)}
+\label{sec:il-delay-force-edges}
+
+\begin{itemize}
+\item \textbf{E\_Delay}:
+  \((delay\ e)\) is a value; no reduction until forced.
+\item \textbf{E\_ForceUneval}:
+  \((force\ (delay\ e)) \to v\) after \(e \Downarrow v\); memoize \(v\).
+\item \textbf{E\_ForceVal}:
+  \((force\ v) \to v\) when \(v\) is not a thunk (idempotent).
+\end{itemize}
+
+\subsubsection{Application elaboration (textual IL)}
+\label{s:il-app-policy}
+
+Given a call \texttt{(h a1 ... an)} in textual IL:
+
+\begin{enumerate}
+\item Evaluate the head to a runtime head \texttt{f} (symbol or grounded).
+\item Look up policy \(\Pi(f)\). If none, use legacy behavior (engine default).
+\item Transform each argument by its mode:
+  \begin{itemize}
+  \item \texttt{val}: leave as-is (it will be evaluated per scheduling).
+  \item \texttt{name}: pass the unreduced term.
+  \item \texttt{need}: wrap as \texttt{(delay ai)}.
+  \end{itemize}
+\item Schedule evaluation of \texttt{val} arguments per \texttt{order}
+      and \texttt{parallel}. \texttt{name} and \texttt{need} are not
+      evaluated here.
+\item Form the call \texttt{(f a1* ... an*)} using the transformed args.
+\item If \texttt{(result val)} is declared, normalize the result value
+      before enqueuing it; otherwise return it as produced.
+\end{enumerate}
+
+\noindent
+For \texttt{need}, the body of \texttt{f} must \emph{force} thunks at the
+points where their values are required. Memoization scope follows
+Section~on by-need (per thunk node, per nondet branch).
+
+\subsubsection{Lowering from surface to textual IL}
+\label{sec:il-lowering-policy}
+
+Surface \texttt{(f a1 ... an)} already has textual IL shape. The
+lowering pass:
+
+\begin{enumerate}
+\item Lowers \texttt{f} and \texttt{ai} subtrees recursively.
+\item Resolves \(\Pi(f)\) from the nearest policy declaration in scope.
+\item Rewrites each \texttt{ai} to \texttt{ai*} by mode
+      (\texttt{need} adds \texttt{(delay ...)}).
+\item Inserts administrative \texttt{let} or \texttt{progn} if needed to
+      enforce \texttt{order} and \texttt{parallel} on strict arguments.
+\item Emits the call \texttt{(f a1* ... an*)}.
+\item Inserts \texttt{force} at strict use sites inside the
+      definition(s) of \texttt{f} where evaluation of \texttt{need}
+      arguments is semantically required.
+\end{enumerate}
+
+\subsubsection{Well-formedness}
+\label{sec:il-policy-wf}
+
+\begin{itemize}
+\item The arity of \texttt{(args ...)} must match the callable arity.
+\item Positions in \texttt{(order custom ...)} and \texttt{(parallel ...)}
+      must be in \(1..n\) and pairwise distinct; positions named in
+      \texttt{parallel} are evaluated concurrently.
+\item Engines MUST treat special forms' non-strict positions as
+      normative unless explicitly configured to override.
+\item Parsers MUST accept \texttt{(policy ...)} even if the runtime
+      ignores policies.
+\end{itemize}
+
+\subsection{Examples (BNFC textual IL)}
+\label{sec:il-policy-examples}
+
+All examples below are complete textual IL files; the final dot
+terminates the file.
+
+\subsubsection{Short-circuit boolean with on-demand forcing}
+\begin{lstlisting}
+(policy my-and (args val need) (order ltr))
+
+(= (my-and true  $rhs) (force $rhs))
+(= (my-and false $rhs) false)
+
+! (my-and true  (println! "forcing rhs") )
+! (my-and false (println! "not forced") )
+.
+\end{lstlisting}
+
+\noindent
+The first call prints and returns the value of \texttt{(println! ...)},
+the second does not print because the \texttt{need} argument is never
+forced.
+
+\subsubsection{By-need memoization}
+\begin{lstlisting}
+(policy costly (args need) (order ltr))
+
+(= (twice-costly $x)
+   (let $y (costly $x)
+     (+ (force $y) (force $y))))
+
+! (twice-costly 41)
+.
+\end{lstlisting}
+
+\noindent
+\texttt{(costly \$x)} is computed once; both \texttt{force}s read the
+memoized result in the same nondeterministic branch.
+
+\subsubsection{Parallel evaluation of a strict argument}
+\begin{lstlisting}
+(policy pmap (args name val) (parallel 2) (order ltr))
+
+(= (pmap $f $xs)
+   (case $xs
+     ((())           ())
+     (((Cons $h $t)) (Cons ($f $h) (pmap $f $t)))))
+
+! (pmap (lambda1 $z (+ $z 1)) (Cons 1 (Cons 2 (Cons 3 ()))))
+.
+\end{lstlisting}
+
+\noindent
+Argument 2 (the list) may be evaluated concurrently with the head call
+to \texttt{\$f} on \texttt{\$h}. Engines remain responsible for effect
+ordering: prints and space updates reflect the chosen schedule.
+
+
+
+\subsection{Summary}
+
+This extension provides:
+\begin{itemize}
+\item \textbf{Syntax}: \texttt{(eval-policy f (args ...) (order ...) ...)}
+\item \textbf{Semantics}: Policy table + argument preparation + thunk/force
+\item \textbf{IL}: Policy metadata + delay/force nodes + elaboration rules
+\item \textbf{Compatibility}: Full backward compatibility when unused
+\end{itemize}
+
+The design keeps MeTTa's core model (equations + unification + rewriting)
+while giving advanced users precise control over evaluation strategy where
+needed.
+
+\section{A Few Concrete Examples}
+
+In this section we work through concrete MeTTa code examples, demonstrating how they instantiate the formal syntax and reduce under the operational semantics given above. These examples validate that our formalism correctly captures actual MeTTa programming patterns.
+
+\subsection{Syntax and Semantics of Simple MeTTa Code Examples}
+
+We explain two MeTTa code snippets by systematically analyzing their syntax against the formal grammar, their reduction under the operational semantics, and their translation to IL.
+
+\subsubsection{EXAMPLE A --- recursive mapper over expressions}
+
+\paragraph{Source}
+
+\begin{verbatim}
+(: map-expr (-> (-> $t $t) Expression Expression))
+(= (map-expr $f $expr)
+   (if (== $expr ()) ()
+       (let* (($head (car-atom $expr))
+              ($tail (cdr-atom $expr))
+              ($head-new ($f $head))
+              ($tail-new (map-expr $f $tail)))
+         (cons-atom $head-new $tail-new))))
+! (map-expr not (False True False False))
+\end{verbatim}
+
+\paragraph{Syntax (surface grammar) --- parsing and classification}
+
+Each line parses according to our formal grammar (Section 2):
+
+\textbf{Type declaration:} \texttt{(: map-expr (-> (-> \$t \$t) Expression Expression))}
+\begin{itemize}
+\item Matches production \texttt{TypeDecl ::= '(' ':' Pattern TypeExpr ')'}
+\item The type \texttt{(-> (-> \$t \$t) Expression Expression)} follows the right-associative arrow rule
+\item \texttt{\$t} is a type variable (polymorphic parameter)
+\item \texttt{Expression} is a built-in meta-type for S-expressions
+\end{itemize}
+
+\textbf{Definitional equality:} \texttt{(= (map-expr \$f \$expr) BODY)}
+\begin{itemize}
+\item Matches \texttt{DefEq ::= '(' '=' Pattern Form ')'}
+\item Left side is a pattern with head \texttt{map-expr} and variable patterns \texttt{\$f}, \texttt{\$expr}
+\item This adds an equality to the knowledge base K for rewriting
+\end{itemize}
+
+\textbf{Control structures in the body:}
+
+The \texttt{if} construct:
+\begin{itemize}
+\item Has shape \texttt{(if <Bool-expr> <then-Atom> <else-Atom>)}
+\item Per the earlier strictness table: position 1 is strict (guard evaluates), positions 2-3 are non-strict (branches passed as Atoms)
+\item The guard \texttt{(== \$expr ())} uses the grounded equality operator
+\end{itemize}
+
+The \texttt{let*} construct:
+\begin{itemize}
+\item Sequential bindings where each RHS evaluates before binding
+\item Each binding has shape \texttt{(<Pattern> <Form>)} where the Form is strict
+\item Variables bound in earlier clauses are visible in later ones
+\end{itemize}
+
+Expression manipulation operators:
+\begin{itemize}
+\item \texttt{car-atom}, \texttt{cdr-atom}, \texttt{cons-atom} are grounded operations on meta-type Expression
+\item They operate at the syntactic level on S-expressions
+\item Arguments of type Expression are passed as Atoms (non-strict) per the library convention
+\end{itemize}
+
+\paragraph{Dynamics (small-step operational semantics)}
+
+Let's trace the evaluation of \texttt{! (map-expr not (False True False False))} using the formal semantics from Section 3:
+
+\textbf{Step 1: Query rule application}
+\begin{itemize}
+\item The machine state has the call in input register I
+\item Query rule unifies with \texttt{(= (map-expr \$f \$expr) ...)}
+\item Unification yields: $\sigma = \{\$f \mapsto \text{not}, \$expr \mapsto \text{(False True False False)}\}$
+\item The instantiated body moves to workspace W
+\end{itemize}
+
+\textbf{Step 2: Evaluate the if guard}
+\begin{itemize}
+\item Must evaluate \texttt{(== (False True False False) ())} per if's strictness
+\item The grounded \texttt{==} operator  compares structural equality
+\item Result: \texttt{False} (non-empty list ? empty list)
+\item By E\_IfFalse rule: the else-branch Atom is selected for evaluation
+\end{itemize}
+
+\textbf{Step 3: Process let* bindings}
+The let* desugars to nested lets. Each binding evaluates as follows:
+
+\begin{enumerate}
+\item \texttt{\$head := (car-atom (False True False False))}
+   \begin{itemize}
+   \item Grounded operation extracts first element
+   \item Result: \texttt{False}
+   \end{itemize}
+   
+\item \texttt{\$tail := (cdr-atom (False True False False))}
+   \begin{itemize}
+   \item Grounded operation removes first element
+   \item Result: \texttt{(True False False)}
+   \end{itemize}
+   
+\item \texttt{\$head-new := (not False)}
+   \begin{itemize}
+   \item Apply the function \texttt{not} (passed as \texttt{\$f})
+   \item Grounded boolean operation yields \texttt{True}
+   \end{itemize}
+   
+\item \texttt{\$tail-new := (map-expr not (True False False))}
+   \begin{itemize}
+   \item Recursive call triggers Query rule again
+   \item By identical reduction steps, yields \texttt{(False True True)}
+   \end{itemize}
+\end{enumerate}
+
+\textbf{Step 4: Construct result}
+\begin{itemize}
+\item \texttt{(cons-atom True (False True True))} builds the final expression
+\item Result moves through W to output O: \texttt{(True False True True)}
+\end{itemize}
+
+This evaluation sequence precisely follows the Meta-MeTTa machine model: Query/Chain for equalities, strict evaluation contexts per the table, and grounded operations for built-ins.
+
+\paragraph{IL translation}
+
+The transpiler produces this MeTTa-IL, preserving strictness annotations:
+
+\begin{verbatim}
+(: map-expr (-> (-> $t $t) Expression Expression))
+(= (map-expr $f $expr)
+   (if (== $expr ())
+       ()
+       (let* (($head (car-atom $expr))
+              ($tail (cdr-atom $expr))
+              ($head-new ($f $head))
+              ($tail-new (map-expr $f $tail)))
+         (cons-atom $head-new $tail-new))))
+! (map-expr not (False True False False))
+.
+
+\end{verbatim}
+
+Key IL mappings:
+\begin{itemize}
+\item \texttt{if} node explicitly marks guard as strict, branches as Atoms
+\item \texttt{let*} preserves sequential evaluation order
+\item \texttt{call} distinguishes grounded operations from \texttt{app} (general application)
+\item Variables use \texttt{(var ...)} nodes, symbols use \texttt{(sym ...)}
+\end{itemize}
+
+\subsubsection{EXAMPLE B --- Python interop, grounded atoms, keyword args}
+
+\paragraph{Source}
+
+\begin{verbatim}
+! (bind! np (py-atom numpy))                              
+! (bind! np-arange (py-atom numpy.arange))               
+! (np-arange (Kwargs (start 2) (stop 10) (step 3)))      
+
+! ((py-dot np abs) ((py-dot np random.randint) -25 0))   
+
+! (bind! abs (py-atom numpy.absolute (-> Number Number))) 
+! (+ (abs -5) 10)                                        
+\end{verbatim}
+
+\paragraph{Syntax --- token binding and grounded operations}
+
+\textbf{Symbol binding mechanism:} \texttt{bind!}
+\begin{itemize}
+\item Matches \texttt{SymbolBind ::= '(' 'bind!' Symbol Form ')'}
+\item Evaluates the \texttt{Form} and binds the resulting atom to \texttt{Symbol} in the current runtime environment
+\item No parse-time substitution and no token map; references to \texttt{Symbol} are ordinary symbol lookups at evaluation time
+\end{itemize}
+
+\textbf{Python interop constructs:}
+
+\texttt{py-atom} (grounded import):
+\begin{itemize}
+\item Type: \texttt{(-> String [TypeExpr] Grounded)}
+\item Evaluates Python expression/import, returns grounded object
+\item Optional type annotation enables dynamic checking
+\item The grounded object wraps the Python value for MeTTa use
+\end{itemize}
+
+\texttt{py-dot} (attribute access):
+\begin{itemize}
+\item Type: \texttt{(-> Grounded Symbol Grounded)}
+\item Implements Python's dot notation for attribute/method access
+\item Can chain: \texttt{(py-dot np random.randint)} means \texttt{np.random.randint}
+\end{itemize}
+
+\texttt{Kwargs} (keyword arguments):
+\begin{itemize}
+\item Bundles keyword arguments for Python functions
+\item Shape: \texttt{(Kwargs (<Symbol> <Form>) ...)}
+\item Each pair becomes a keyword argument in the Python call
+\end{itemize}
+
+\paragraph{Dynamics --- evaluation with token expansion and grounded calls}
+
+\textbf{Token registration phase:}
+
+\texttt{! (bind! np (py-atom numpy))}:
+\begin{enumerate}
+\item Evaluate \texttt{(py-atom numpy)} using E\_PyAtom rule
+\item Python import returns grounded module object \texttt{G(numpy)}
+\item Install binding: $\sigma[\text{np}] := \text{G(numpy)}$
+\item Future parsing replaces \texttt{np} with \texttt{G(numpy)}
+\end{enumerate}
+
+\texttt{! (bind! np-arange (py-atom numpy.arange))}:
+\begin{enumerate}
+\item \texttt{py-atom} evaluates the Python expression \texttt{numpy.arange}
+\item Returns grounded callable \texttt{G(numpy.arange)}
+\item Install binding: $\sigma[\text{np-arange}] := \text{G(numpy.arange)}$
+\end{enumerate}
+
+\textbf{Grounded function call with kwargs:}
+
+\texttt{! (np-arange (Kwargs (start 2) (stop 10) (step 3)))}:
+\begin{enumerate}
+\item Parser has already substituted: \texttt{np-arange} $\rightarrow$ \texttt{G(numpy.arange)}
+\item The call shape is \texttt{(G(numpy.arange) (Kwargs ...))}
+\item E\_GCall rule applies: invoke Python function with keyword arguments
+\item Python executes: \texttt{numpy.arange(start=2, stop=10, step=3)}
+\item Returns grounded NumPy array object
+\end{enumerate}
+
+\textbf{Chained attribute access and calls:}
+
+\texttt{! ((py-dot np abs) ((py-dot np random.randint) -25 0))}:
+\begin{enumerate}
+\item Inner: \texttt{(py-dot np random.randint)}
+   \begin{itemize}
+   \item \texttt{np} already replaced with \texttt{G(numpy)}
+   \item E\_PyDot: access \texttt{random} attribute, then \texttt{randint}
+   \item Result: \texttt{G(numpy.random.randint)}
+   \end{itemize}
+\item Inner call: \texttt{(G(numpy.random.randint) -25 0)}
+   \begin{itemize}
+   \item E\_GCall with positional arguments
+   \item Returns random integer in [-25, 0)
+   \end{itemize}
+\item Outer: \texttt{(py-dot np abs)} yields \texttt{G(numpy.abs)}
+\item Outer call applies \texttt{numpy.abs} to the random integer
+\end{enumerate}
+
+\textbf{Typed grounded binding:}
+
+\texttt{! (bind! abs (py-atom numpy.absolute (-> Number Number)))}:
+\begin{itemize}
+\item The type annotation attaches to the grounded object
+\item Future calls to \texttt{abs} check argument/return types
+\item Type mismatches yield \texttt{BadType} atoms (not exceptions)
+\end{itemize}
+
+\paragraph{IL translation}
+
+Token bindings become module header declarations:
+
+\begin{verbatim}
+! (bind! np        (py-atom "numpy"))
+! (bind! np-arange (py-atom "numpy.arange"))
+
+! (np-arange (Kwargs (start 2) (stop 10) (step 3)))
+
+! ((py-dot np abs) ((py-dot np random.randint) -25 0))
+
+! (bind! abs (py-atom "numpy.absolute" (-> Number Number)))
+! (+ (abs -5) 10)
+.
+\end{verbatim}
+
+IL translation strategy:
+\begin{itemize}
+\item \texttt{bind!} effects captured as static \texttt{(token ...)} declarations
+\item \texttt{gconst} nodes represent grounded constructors
+\item \texttt{gcall} distinguishes grounded calls from symbolic \texttt{call}
+\item Keywords preserved as structured \texttt{(kwargs ...)} nodes
+\end{itemize}
+
+\subsubsection{Why these explanations/ILs line up with the formal semantics}
+
+These examples demonstrate key alignments between practice and formalism:
+
+\textbf{Evaluation contexts:} The IL preserves exactly the strictness positions from the strictness table. The \texttt{if} guard evaluates while branches remain Atoms until selected--this matches both the operational semantics (E\_IfTrue/E\_IfFalse) and standard library usage.
+
+\textbf{Sequential evaluation:} The \texttt{let*} translation to nested \texttt{let}s ensures left-to-right binding evaluation, matching the given semantics where each RHS reduces before binding.
+
+\textbf{Runtime binding only:} \texttt{bind!} installs a symbol-to-atom binding in the current runtime environment; there is no token-expansion phase.
+
+
+\textbf{Grounded operations:} Expression constructors and Python interop follow the grounded operation semantics: strict evaluation of arguments (except those typed Atom), then host-level execution, returning grounded results.
+
+\textbf{Register machine alignment:} The execution traces follow the Meta-MeTTa four-register model: equalities trigger Query/Chain rules moving terms through I$\rightarrow$K$\rightarrow$W$\rightarrow$O, with grounded operations as Transform steps.
+
+\subsection{Example: The Red and Black Lambda Calculus in MeTTa}
+
+This example explores a fundamental challenge in MeTTa: implementing parametric algebraic data types (ADTs) with proper namespacing. We examine several approaches to encoding the lambda calculus with colored terms, demonstrating how MeTTa's equation-based semantics and nondeterminism interact with type declarations.
+
+\subsubsection{Code Snippets in Question}
+
+ADT's are classically represented in MeTTa as follows:
+
+\begin{verbatim}
+; type M ::= B | V | lambda V.M | (M M)
+(: Term Type)
+(: Ground (-> B Term))
+(: Mention (-> V Term))
+(: Abstraction (-> V (-> Term Term)))
+(: Application (-> Term (-> Term Term)))
+\end{verbatim}
+
+For coloring the Lambda Calculus, we need to parametrize the above ADT in B and V. The naive way to do this is wrapping the subspace in a function:
+
+\begin{verbatim}
+(= (LambdaTheory $B $V) (superpose (
+(: Term Type)
+(: Ground (-> $B Term))
+(: Mention (-> $V Term))
+(: Abstraction (-> $V (-> Term Term)))
+(: Application (-> Term (-> Term Term)))
+)))
+\end{verbatim}
+
+In both cases, the terms are not contained in an encompassing theory: \texttt{(: Application (-> Term (-> Term Term)))} does not know what parameters went into the function. Computationally: if you can't tell the difference, does it matter? In most languages, there's more to a type than just its inner name. In Scala, there's a qualified path to that name, see below for the example: \texttt{root.RedBlackLambda.RC.Term} and \texttt{root.RedBlackLambda.BC.Term} are different types. We can wrap a result in a container, effectively resulting in a path: \texttt{(RedLambda (LambdaTheory BTheory String))} results in
+
+\begin{verbatim}
+(RedLambda (: Term Type))
+(RedLambda (: Ground (-> BTheory Term)))
+(RedLambda (: Mention (-> String Term)))
+(RedLambda (: Abstraction (-> String (-> Term Term))))
+(RedLambda (: Application (-> Term (-> Term Term))))
+(RedLambda (= ((equivalent $l) $r) ???)) ; added to make the result more tangible
+\end{verbatim}
+
+It doesn't seem unreasonable to have functions wrapped in an object, especially if you consider prefix compression. However, we get something different than we meant: we want to transport the types to the global namespace, but make them unique. We could solve this by parametrization, take:
+
+\begin{verbatim}
+(= (LambdaTheory $F $B $V) (superpose (
+(: ($F Term) Type)
+(: ($F Ground) (-> $B ($F Term)))
+(: ($F Mention) (-> $V ($F Term)))
+(: ($F Abstraction) (-> $V (-> ($F Term) ($F Term))))
+(: ($F Application) (-> ($F Term) (-> ($F Term) ($F Term))))
+)))
+\end{verbatim}
+
+\texttt{(LambdaTheoryF RC BTheory String)} now results in
+
+\begin{verbatim}
+(: (RC Term) Type)
+(: (RC Ground) (-> BTheory (RC Term)))
+(: (RC Mention) (-> String (RC Term)))
+(: (RC Abstraction) (-> String (-> (RC Term) (RC Term))))
+(: (RC Application) (-> (RC Term) (-> (RC Term) (RC Term))))
+\end{verbatim}
+
+\subsubsection{What each fragment is syntactically}
+
+\paragraph{A. The unparametrized ADT (algebraic signature)}
+
+\begin{verbatim}
+; type M ::= B | V | lambda V.M | (M M)
+(: Term Type)
+(: Ground     (-> B Term))
+(: Mention    (-> V Term))
+(: Abstraction (-> V (-> Term Term)))
+(: Application (-> Term (-> Term Term)))
+\end{verbatim}
+
+\textbf{Syntactic analysis:}
+Each line follows the type declaration production given above:
+\begin{itemize}
+\item \texttt{TypeDecl ::= '(' ':' Pattern TypeExpr ')'}
+\item \texttt{Term} becomes a type constant via \texttt{(: Term Type)}
+\item Constructor signatures use right-associative arrows: \texttt{(-> V (-> Term Term))} parses as \texttt{V $\rightarrow$ (Term $\rightarrow$ Term)}
+\end{itemize}
+
+\textbf{Operational behavior:}
+Under the semantics given above, type declarations populate the type environment $\Delta$ but do not reduce. They act as static constraints: when \texttt{Ground} is later used in an equality like \texttt{(= (Ground b) ...)}, the type checker verifies that \texttt{b : B} and the result has type \texttt{Term}.
+
+\textbf{The limitation:} This encoding has no parameters--\texttt{B} and \texttt{V} are global type variables. Different instantiations would collide in the same namespace.
+
+\paragraph{B. The naive parameterization (returning a bundle of facts)}
+
+\begin{verbatim}
+(= (LambdaTheory $B $V) (superpose (
+  (: Term Type)
+  (: Ground     (-> $B Term))
+  (: Mention    (-> $V Term))
+  (: Abstraction (-> $V (-> Term Term)))
+  (: Application (-> Term (-> Term Term)))
+)))
+\end{verbatim}
+
+\textbf{Syntactic structure:}
+This creates a function via definitional equality:
+\begin{itemize}
+\item \texttt{DefEq ::= '(' '=' Pattern Form ')'}
+\item LHS pattern: \texttt{(LambdaTheory \$B \$V)} with variables for parameters
+\item RHS: \texttt{superpose} applied to a tuple of type declarations
+\end{itemize}
+
+\textbf{Operational semantics:}
+When \texttt{(LambdaTheory T1 T2)} is called:
+\begin{enumerate}
+\item Query rule (Section 3.3) unifies with the LHS pattern
+\item Substitution: \texttt{\$B $\rightarrow$ T1, \$V $\rightarrow$ T2} in the RHS
+\item \texttt{superpose} rule: tuple elements become separate results
+\item Each \texttt{(: ...)} declaration moves through W to O
+\end{enumerate}
+
+Result: Five type declarations with \texttt{T1} and \texttt{T2} substituted for parameters.
+
+\textbf{The problem:} While parameterized, the resulting \texttt{Term} type is still unqualified. Two calls like \texttt{(LambdaTheory Bool String)} and \texttt{(LambdaTheory Int Char)} both produce a \texttt{Term} type--they collide in the global namespace. The parameters are lost after instantiation.
+
+\paragraph{C. Namespacing by wrapping (syntactic container)}
+
+\begin{verbatim}
+(RedLambda (LambdaTheory BTheory String))
+\end{verbatim}
+
+\textbf{Syntactic analysis:}
+Pure function application without a reduction rule:
+\begin{itemize}
+\item \texttt{RedLambda} has no associated equality in K
+\item Application remains unreduced as data structure
+\item Each of the five results from \texttt{superpose} gets wrapped
+\end{itemize}
+
+\textbf{Operational behavior:}
+\begin{enumerate}
+\item Inner \texttt{(LambdaTheory BTheory String)} reduces to five results via superpose
+\item Each result \texttt{r} becomes \texttt{(RedLambda r)}
+\item No further reduction occurs (no equality for \texttt{RedLambda})
+\item Results are structural terms: \texttt{(RedLambda (: Term Type))}, etc.
+\end{enumerate}
+
+\textbf{Why this partially works:} The wrapper provides a namespace prefix. Pattern matching can distinguish \texttt{(RedLambda (: Term Type))} from \texttt{(BlackLambda (: Term Type))}.
+
+\textbf{Why it's incomplete:} The wrapped declarations aren't usable as regular types. You can't write \texttt{(: myFunc (-> (RedLambda Term) Bool))} because \texttt{(RedLambda Term)} isn't recognized as a type--it's just an unreduced expression.
+
+\paragraph{D. Qualifying the names themselves (parametric functor)}
+
+\begin{verbatim}
+(= (LambdaTheory $F $B $V) (superpose (
+  (: ($F Term) Type)
+  (: ($F Ground)      (-> $B ($F Term)))
+  (: ($F Mention)     (-> $V ($F Term)))
+  (: ($F Abstraction) (-> $V (-> ($F Term) ($F Term))))
+  (: ($F Application) (-> ($F Term) (-> ($F Term) ($F Term))))
+)))
+\end{verbatim}
+
+\textbf{Key syntactic innovation:}
+Using \texttt{(\$F Term)} creates a compound symbol:
+\begin{itemize}
+\item In surface syntax, this is just an S-expression \texttt{(RC Term)}
+\item The type system treats it as a qualified name
+\item \texttt{(\$F Term)} in type position becomes a distinct type for each \texttt{\$F}
+\end{itemize}
+
+\textbf{Operational semantics:}
+Calling \texttt{(LambdaTheory RC BTheory String)}:
+\begin{enumerate}
+\item Query unifies: \texttt{\$F $\rightarrow$ RC, \$B $\rightarrow$ BTheory, \$V $\rightarrow$ String}
+\item Substitution produces \texttt{(: (RC Term) Type)}, etc.
+\item Each declaration has qualified names: \texttt{(RC Term)}, \texttt{(RC Ground)}
+\item These are distinct from \texttt{(BC Term)}, \texttt{(BC Ground)}
+\end{enumerate}
+
+\textbf{Why this succeeds:} The qualified symbols are first-class types in the global namespace. You can write \texttt{(: myFunc (-> (RC Term) (BC Term)))} and the type system recognizes both as valid, distinct types.
+
+\subsubsection{How the semantics justifies what happens}
+
+\textbf{The core evaluation mechanism:}
+All approaches use the same Meta-MeTTa register machine:
+\begin{enumerate}
+\item Function call enters input register I
+\item Query rule matches against equalities in K
+\item Unification binds pattern variables
+\item Instantiated RHS moves to workspace W
+\item Results propagate to output O
+\end{enumerate}
+
+\textbf{Role of nondeterminism:}
+The \texttt{superpose} operation is crucial:
+\begin{itemize}
+\item Transforms a tuple into multiple alternative results
+\item Each alternative is processed independently
+\item No reduction occurs inside type declarations--they're values
+\item Enables "returning multiple declarations" from one function
+\end{itemize}
+
+\textbf{Type declaration semantics:}
+Key insight: \texttt{(: s T)} declarations:
+\begin{itemize}
+\item Add typing facts to environment $\Delta$
+\item Do not themselves reduce
+\item Act as constraints for later term construction
+\item Can contain compound expressions as type names
+\end{itemize}
+
+\textbf{Why qualification works:}
+The expression \texttt{(RC Term)} serves dual roles:
+\begin{enumerate}
+\item \textbf{Syntactically:} It's a valid S-expression by the grammar
+\item \textbf{Type-theoretically:} It's treated as an atomic type name
+\item \textbf{Operationally:} No reduction rule applies (no equality for RC as function)
+\item \textbf{Semantically:} Type checker recognizes it as a distinct type constant
+\end{enumerate}
+
+\subsubsection{A compact MeTTa-IL that a transpiler can emit}
+
+The IL design explicitly supports these patterns through careful representation choices:
+
+\paragraph{IL Core (schema)}
+
+\begin{verbatim}
+; Modules & declarations
+(MODULE <sym> ...)                        ; optional grouping
+(TYPE <sym>)                              ; declare a type constant
+(SIG  <sym> <type>)                       ; declare a typed operator
+
+; Types (right-assoc)
+(TY <sym>)                                ; type constant/name
+(ARROW <type> <type>)                     ; function arrow
+
+; Functions (rules)
+(DEF <head-pattern> <body>)               ; (= <head> <body>) at IL-level
+
+; Values, variables, apps
+(SYM <name>)                              ; a bare symbol
+(VAR <name>)                              ; a pattern variable $name
+(APP <f> <arg1> ... <argn>)               ; application
+
+; Non-deterministic bundles
+(SUPERPOSE <list-of-values>)              ; explicit non-deterministic result set
+(TUPLE <v1> ... <vn>)                     ; convenience carrier for lists
+
+; Qualified symbols (namespacing-as-construction)
+(QUAL <q> <sym>)                          ; ($q sym)  -- a new symbol
+\end{verbatim}
+
+\textbf{Design rationale:}
+\begin{itemize}
+\item \textbf{SUPERPOSE:} Direct representation of nondeterministic branching
+\item \textbf{QUAL:} Preserves compound names without premature string mangling
+\item \textbf{TYPE/SIG:} Static declarations matching MeTTa's type facts
+\item \textbf{DEF:} Equality rules drive the rewrite system
+\end{itemize}
+
+\paragraph{IL for the unparametrized ADT}
+
+\begin{verbatim}
+; LambdaCore
+(: Term Type)
+(: Ground      (-> B Term))
+(: Mention     (-> V Term))
+(: Abstraction (-> V (-> Term Term)))
+(: Application (-> Term (-> Term Term)))
+.
+\end{verbatim}
+
+Direct translation: each \texttt{(:...)} becomes a \texttt{TYPE} or \texttt{SIG} declaration.
+
+\paragraph{IL for the naive LambdaTheory \$B \$V}
+
+\begin{verbatim}
+(= (LambdaTheory $B $V)
+   (superpose (
+     (: Term Type)
+     (: Ground      (-> $B Term))
+     (: Mention     (-> $V Term))
+     (: Abstraction (-> $V (-> Term Term)))
+     (: Application (-> Term (-> Term Term)))
+   )))
+.
+\end{verbatim}
+
+The equality becomes a \texttt{DEF} rule; \texttt{superpose} maps to \texttt{SUPERPOSE}.
+
+\paragraph{IL for the ``wrapped'' variant (RedLambda (LambdaTheory ...))}
+
+\begin{verbatim}
+(RedLambda (LambdaTheory BTheory String))
+.
+\end{verbatim}
+
+Pure structural term--no reduction rule, just data.
+
+\paragraph{IL for the qualified-name version LambdaTheory \$F \$B \$V}
+
+\begin{verbatim}
+(= (LambdaTheory $F $B $V)
+   (superpose (
+     (: ($F Term) Type)
+     (: ($F Ground)      (-> $B ($F Term)))
+     (: ($F Mention)     (-> $V ($F Term)))
+     (: ($F Abstraction) (-> $V (-> ($F Term) ($F Term))))
+     (: ($F Application) (-> ($F Term) (-> ($F Term) ($F Term))))
+   )))
+.
+\end{verbatim}
+
+\textbf{The QUAL node:} Represents qualified names without string concatenation. A backend can later decide whether \texttt{(QUAL RC Term)} becomes \texttt{RC.Term}, \texttt{RC::Term}, or remains structural.
+
+Example instantiation. The surface call
+
+\begin{verbatim}
+(LambdaTheory RC BTheory String)
+.
+\end{verbatim}
+
+IL-reduces to the bundle
+
+\begin{verbatim}
+(superpose (
+  (: (RC Term) Type)
+  (: (RC Ground)      (-> BTheory (RC Term)))
+  (: (RC Mention)     (-> String  (RC Term)))
+  (: (RC Abstraction) (-> String  (-> (RC Term) (RC Term))))
+  (: (RC Application) (-> (RC Term) (-> (RC Term) (RC Term))))
+))
+.
+\end{verbatim}
+
+A materializer pass can finalize names, e.g. \texttt{(QUAL RC Term)} to \texttt{RC.Term}, and emit the concrete environment:
+
+\begin{verbatim}
+TYPE RC.Term
+SIG  RC.Ground      : BTheory -> RC.Term
+SIG  RC.Mention     : String  -> RC.Term
+SIG  RC.Abstraction : String  -> RC.Term -> RC.Term
+SIG  RC.Application : RC.Term -> RC.Term -> RC.Term
+\end{verbatim}
+
+\subsubsection{Why this IL is faithful and useful to your transpiler}
+
+\textbf{Evaluation fidelity:}
+The IL execution model precisely mirrors Meta-MeTTa:
+\begin{itemize}
+\item \texttt{DEF} rules $\rightarrow$ equality-based rewriting via Query/Chain
+\item \texttt{SUPERPOSE} $\rightarrow$ nondeterministic branching in workspace
+\item \texttt{TYPE/SIG} $\rightarrow$ static type environment population
+\item Register flow: I (input) $\rightarrow$ K (match) $\rightarrow$ W (work) $\rightarrow$ O (output)
+\end{itemize}
+
+\textbf{Namespace preservation:}
+The \texttt{QUAL} node maintains structure without premature commitment:
+\begin{itemize}
+\item Type checking sees \texttt{(QUAL RC Term)} as distinct from \texttt{(QUAL BC Term)}
+\item No string mangling during compilation
+\item Backend chooses final representation (structural or string-based)
+\end{itemize}
+
+\textbf{Compositional correctness:}
+Each language feature maps to exactly one IL construct:
+\begin{itemize}
+\item Surface \texttt{=} $\rightarrow$ IL \texttt{DEF}
+\item Surface \texttt{superpose} $\rightarrow$ IL \texttt{SUPERPOSE}
+\item Surface \texttt{(\$F X)} $\rightarrow$ IL \texttt{(QUAL (VAR F) (SYM X))}
+\item Surface \texttt{:} $\rightarrow$ IL \texttt{TYPE} or \texttt{SIG}
+\end{itemize}
+
+\textbf{Tool-friendly design:}
+\begin{itemize}
+\item SSA-like structure (no mutation)
+\item Explicit variable/symbol distinction
+\item Right-associative arrows made explicit
+\item Direct correspondence to register machine states
+\end{itemize}
+
+\subsubsection{Optional: how a loader would use these results}
+
+If you want \texttt{LambdaTheory} to populate a space (rather than just return results), a tiny conventional wrapper suffices:
+
+\begin{verbatim}
+(= (install-LambdaTheory $F $B $V $space)
+   (match &self
+          (LambdaTheory $F $B $V)
+          (add-atom $space $x)))
+\end{verbatim}
+
+\textbf{Operational breakdown:}
+\begin{enumerate}
+\item \texttt{match} queries \texttt{self} for results of \texttt{(LambdaTheory \$F \$B \$V)}
+\item Each result binds to \texttt{\$x}
+\item \texttt{add-atom} inserts the unreduced declaration into \texttt{\$space}
+\item Process repeats for all five declarations
+\end{enumerate}
+
+This leverages two key features:
+\begin{itemize}
+\item \texttt{match} arguments are Atoms (non-strict)--patterns aren't pre-evaluated
+\item \texttt{add-atom} inserts its second argument unreduced--declarations remain as data
+\end{itemize}
+
+\textbf{Summary}
+
+The progression from naive to qualified parameterization demonstrates MeTTa's expressiveness:
+\begin{itemize}
+\item Type declarations are first-class values that can be computed
+\item Nondeterminism via \texttt{superpose} enables "returning multiple declarations"
+\item Compound expressions as type names provide namespacing
+\item The operational semantics treats all these uniformly
+\end{itemize}
+
+The IL faithfully preserves these semantics while providing a clean compilation target that supports both structural and name-based backends.
+
+\subsection{Example: Chess Queens Problem in MeTTa}
+
+This example demonstrates how a sophisticated algorithm--the N-queens backtracking search--is expressed in MeTTa using equational programming, higher-order functions, and pattern matching. We systematically analyze Mike Archbold's implementation against our formal syntax and semantics, showing how complex control flow emerges from simple rewrite rules.
+
+\subsubsection{The snippet (for reference)}
+
+\begin{verbatim}
+(= (empty-board) Nil)
+
+(= (adjoin-position $new-row $k $rest-of-queens)
+    (append $rest-of-queens (Cons (list ($k $new-row)) Nil)))
+
+(= (select-k $k $positions)
+    (if (== $k 1)
+        (car-list $positions)
+        (select-k (- $k 1) (cdr-list $positions))))
+
+(= (row-safe? $k-col $k-row $positions)
+    (null-list? (filter
+                (lambda1 $x (and (== (cdr-list $x) (list ($k-row))) (not (== (car-list $x) $k-col))))
+                $positions)))
+
+(= (col-safe? $k-row $positions)
+    (let $iter (lambda3 $cur $pos $self
+        (if (null-list? $pos)
+            True
+            (if (or (== (cdar-list $pos) (Cons (- $k-row $cur) Nil))
+                    (== (cdar-list $pos) (Cons (+ $k-row $cur) Nil)))
+                False
+                ($self (+ $cur 1) (cdr-list $pos) $self))))
+    ($iter 1 (cdr-list (reverse $positions)) $iter)))
+
+(= (safe? $k $positions)
+    (let (Cons $k-col (Cons $k-row Nil)) (select-k $k $positions)
+        (and (col-safe? $k-row $positions) (row-safe? $k-col $k-row $positions))))
+
+(= (queens $board-size)
+  (let $queen-cols (lambda2 $k $self
+    (if (== $k 0)
+        (list ((empty-board)))
+        (filter
+         (lambda1 $positions (safe? $k $positions))
+         (flatmap
+          (lambda1 $rest-of-queens
+            (map (lambda1 $new-row
+                   (adjoin-position $new-row $k $rest-of-queens))
+                 (enumerate-interval 1 $board-size)))
+          ($self (- $k 1) $self)))))
+  ($queen-cols $board-size $queen-cols)))
+
+!(assertEqual
+    (queens 4)
+    (tree (((1 2) (2 4) (3 1) (4 3)) ((1 3) (2 1) (3 4) (4 2)))))
+\end{verbatim}
+
+\subsubsection{How each form fits the surface grammar}
+
+We systematically map each construct to our formal grammar from Section 2, demonstrating that even complex algorithms use only MeTTa's core features.
+
+\paragraph{Definitional equalities as rewrite rules}
+
+Each function definition follows the pattern:
+\begin{verbatim}
+(= (function-name pattern1 pattern2 ...) body)
+\end{verbatim}
+
+This matches the grammar production:
+\begin{itemize}
+\item \texttt{DefEq ::= '(' '=' Pattern Form ')'}
+\item The LHS is a pattern with head symbol and variable patterns
+\item The RHS is an arbitrary Form (expression)
+\end{itemize}
+
+\textbf{Operational impact:} Each equality adds a rewrite rule to the knowledge base K. When a matching call appears, the Query rule unifies the call with the LHS pattern and replaces it with the instantiated RHS.
+
+\paragraph{List data structures}
+
+The code uses three list representations:
+\begin{itemize}
+\item \textbf{Cons lists:} \texttt{(Cons head tail)} with \texttt{Nil} as empty
+\item \textbf{Tuple construction:} \texttt{(list e1 e2 ...)} for fixed-size tuples
+\item \textbf{Hybrid:} Lists of tuples, e.g., \texttt{(Cons (list 1 2) Nil)}
+\end{itemize}
+
+\textbf{Grammar classification:} These are ordinary function applications where \texttt{Cons}, \texttt{list}, and \texttt{Nil} are symbols. The operational semantics treats them as constructor applications--they evaluate their arguments but don't reduce further unless pattern-matched.
+
+\paragraph{Control flow through special forms}
+
+\textbf{The \texttt{if} construct:}
+\begin{itemize}
+\item Surface shape: \texttt{(if condition then-branch else-branch)}
+\item Strictness: Position 1 is strict, positions 2-3 are Atoms
+\item Operational rule: Evaluate condition to Bool, then select branch
+\end{itemize}
+
+This evaluation order is crucial: branches remain unevaluated until selected, enabling recursion without infinite loops.
+
+\textbf{The \texttt{let} construct:}
+\begin{itemize}
+\item Two forms: binding variables and pattern matching
+\item \texttt{(let \$var expr body)}: Evaluate expr, bind to \$var, evaluate body
+\item \texttt{(let pattern expr body)}: Evaluate expr, unify with pattern, evaluate body
+\end{itemize}
+
+Pattern let enables destructuring: \texttt{(let (Cons \$h \$t) lst ...)} extracts head and tail.
+
+\paragraph{Higher-order programming with lambdas}
+
+MeTTa provides arity-specific lambda constructors:
+\begin{itemize}
+\item \texttt{lambda1}: Single argument closure
+\item \texttt{lambda2}: Two argument closure  
+\item \texttt{lambda3}: Three argument closure
+\end{itemize}
+
+\textbf{The self-passing pattern:} Since MeTTa lambdas can't directly reference themselves, recursive closures use an explicit self parameter:
+\begin{verbatim}
+(let $f (lambda2 $x $self ... ($self ...)) 
+  ($f initial-value $f))
+\end{verbatim}
+
+This "tying the knot" pattern appears in both \texttt{col-safe?} and \texttt{queens}.
+
+\paragraph{Grounded operations}
+
+Arithmetic (\texttt{+}, \texttt{-}), comparison (\texttt{==}), and logic (\texttt{and}, \texttt{or}, \texttt{not}) are grounded operations:
+\begin{itemize}
+\item Type signatures enforce argument types (e.g., \texttt{(-> Number Number Number)})
+\item Arguments evaluate before the operation (strict evaluation)
+\item Results are deterministic ground values
+\end{itemize}
+
+\subsubsection{Intended data representation}
+
+The algorithm represents a board configuration as a list of queen positions, ordered by column:
+
+\begin{verbatim}
+positions :: List(Position)
+Position  = (column row)  -- a 2-tuple using (list col row)
+Board     = List of positions for columns 1..k
+\end{verbatim}
+
+\textbf{Example:} For a 4x4 board with queens at (1,2), (2,4), (3,1), (4,3):
+\begin{verbatim}
+(Cons (list 1 2) 
+  (Cons (list 2 4) 
+    (Cons (list 3 1) 
+      (Cons (list 4 3) Nil))))
+\end{verbatim}
+
+\textbf{Key invariant:} The k-th element represents the queen in column k, so we only need to track row positions to avoid conflicts.
+
+\subsubsection{Operational semantics walk-through}
+
+We trace execution using the Meta-MeTTa four-register machine model, showing how high-level control flow emerges from low-level rewrite steps.
+
+\paragraph{Base operations}
+
+\textbf{\texttt{empty-board}:}
+\begin{itemize}
+\item Equality: \texttt{(= (empty-board) Nil)}
+\item When called: Query rule finds this equality, returns \texttt{Nil}
+\item Represents the empty board with no queens placed
+\end{itemize}
+
+\textbf{\texttt{adjoin-position}:}
+\begin{itemize}
+\item Purpose: Add a new queen at position (k, new-row) to existing board
+\item Implementation: \texttt{(append rest (Cons (list k new-row) Nil))}
+\item Operational steps:
+  \begin{enumerate}
+  \item Create position tuple: \texttt{(list k new-row)}
+  \item Wrap in singleton list: \texttt{(Cons ... Nil)}
+  \item Append to existing positions
+  \end{enumerate}
+\end{itemize}
+
+\textbf{\texttt{select-k}:}
+\begin{itemize}
+\item Purpose: Extract the k-th position from the list
+\item Algorithm: Recursive list traversal with counter
+\item Base case: \texttt{k = 1} returns \texttt{(car-list positions)}
+\item Recursive: Decrement k, advance to tail via \texttt{(cdr-list positions)}
+\end{itemize}
+
+\paragraph{Safety predicates}
+
+The safety checks implement the queens constraint: no two queens can attack each other.
+
+\textbf{Row safety (\texttt{row-safe?}):}
+
+Algorithm logic:
+\begin{enumerate}
+\item Filter positions to find those in the same row as k-row
+\item Check if any have different column than k-col
+\item If filter returns empty list, position is safe
+\end{enumerate}
+
+Operational breakdown of the filter predicate:
+\begin{verbatim}
+(lambda1 $x 
+  (and (== (cdr-list $x) (list ($k-row)))  ; same row?
+       (not (== (car-list $x) $k-col))))   ; different column?
+\end{verbatim}
+
+For position \texttt{\$x = (list c r)}:
+\begin{itemize}
+\item \texttt{(car-list \$x)} extracts column c
+\item \texttt{(cdr-list \$x)} extracts \texttt{(list r)} (singleton list)
+\item Compare with \texttt{(list k-row)} to check row equality
+\end{itemize}
+
+\textbf{Diagonal safety (\texttt{col-safe?}):}
+
+This is the most complex predicate, checking diagonal attacks:
+
+\begin{enumerate}
+\item Reverse the position list (newest queen last)
+\item Start from the tail (oldest queens)
+\item For each older queen at distance \texttt{cur}:
+   \begin{itemize}
+   \item Check if row difference equals ±cur (diagonal attack)
+   \item If yes, return False
+   \item Otherwise, increment cur and check next older queen
+   \end{itemize}
+\end{enumerate}
+
+The \texttt{lambda3} with self-passing implements this iteration:
+\begin{itemize}
+\item \texttt{\$cur}: Distance from current queen being placed
+\item \texttt{\$pos}: Remaining positions to check
+\item \texttt{\$self}: The lambda itself for recursion
+\end{itemize}
+
+\textbf{Combined safety (\texttt{safe?}):}
+
+Uses pattern-matching let to destructure the k-th position:
+\begin{verbatim}
+(let (Cons $k-col (Cons $k-row Nil)) (select-k $k $positions) ...)
+\end{verbatim}
+
+Operational steps:
+\begin{enumerate}
+\item Evaluate \texttt{(select-k k positions)} to get \texttt{(list col row)}
+\item Unify with pattern \texttt{(Cons \$k-col (Cons \$k-row Nil))}
+\item If unification succeeds: bind \$k-col and \$k-row
+\item Evaluate body: \texttt{(and (col-safe? ...) (row-safe? ...))}
+\end{enumerate}
+
+\paragraph{The main search procedure}
+
+\texttt{queens} implements backtracking search through functional composition:
+
+\begin{verbatim}
+(queens board-size) =
+  let queen-cols = (lambda2 k self ...)
+  in (queen-cols board-size queen-cols)
+\end{verbatim}
+
+\textbf{The recursive strategy:}
+\begin{enumerate}
+\item \textbf{Base case (k=0):} Return list containing empty board
+\item \textbf{Recursive case:}
+   \begin{itemize}
+   \item Get all valid (k-1)-queen configurations recursively
+   \item For each configuration:
+     \begin{itemize}
+     \item Try placing queen k in each row 1..board-size
+     \item Keep only safe placements
+     \end{itemize}
+   \end{itemize}
+\end{enumerate}
+
+\textbf{Functional composition breakdown:}
+\begin{verbatim}
+(filter safe?                          ; 3. Keep only safe boards
+  (flatmap                             ; 2. For each (k-1) board
+    (lambda1 $rest                     
+      (map                             ; 1. Try each row
+        (lambda1 $row (adjoin ...))    
+        (enumerate-interval 1 n)))     
+    (self (- k 1) self)))              ; Recursive call
+\end{verbatim}
+
+The composition reads bottom-up:
+\begin{enumerate}
+\item Recursively get (k-1)-queen boards
+\item Expand each to n candidates (one per row)
+\item Filter to keep only safe placements
+\end{enumerate}
+
+\paragraph{Execution trace for (queens 4)}
+
+Initial call triggers the equality for queens:
+\begin{enumerate}
+\item Bind \texttt{\$board-size $\rightarrow$ 4}
+\item Create closure \texttt{queen-cols}
+\item Call \texttt{(queen-cols 4 queen-cols)}
+\end{enumerate}
+
+At k=4:
+\begin{itemize}
+\item Recursive call: \texttt{(self 3 self)} gets all 3-queen boards
+\item For each 3-queen board, try rows 1-4 for column 4
+\item Filter with \texttt{(safe? 4 ...)} keeps valid 4-queen boards
+\end{itemize}
+
+This continues recursively until k=0 returns \texttt{(list (Nil))}, then builds up complete solutions.
+
+\subsubsection{Translation to MeTTa-IL (the transpiler's core IR)}
+
+The IL translation preserves the operational semantics while making evaluation order explicit.
+
+IL summary (excerpt; same as in previous messages):
+
+\begin{itemize}
+\item \texttt{Def\{name, params, body\}}
+\item \texttt{App(fn, [args...])} function/constructor call
+\item \texttt{If(cond, then, else)}
+\item \texttt{Let(pattern, value, body)} (pattern may be \texttt{ListCons(h, t)} etc.)
+\item \texttt{Lam(arity, [vars], body)}
+\item Data: \texttt{Sym("Nil")}, \texttt{Num(n)}, \texttt{Bool(b)}, \texttt{Var(x)}
+\item List sugar: \texttt{List([...])}, \texttt{Cons(head, tail)}
+\end{itemize}
+
+Note. I keep tuple (k row) as \texttt{List([Var("k"), Var("row")])}, matching how the source uses list.
+
+\paragraph{IL for the chess snippet}
+
+\begin{verbatim}
+(= (empty-board) Nil)
+
+(= (adjoin-position $new-row $k $rest-of-queens)
+    (append $rest-of-queens (Cons (list ($k $new-row)) Nil)))
+
+(= (select-k $k $positions)
+    (if (== $k 1)
+        (car-list $positions)
+        (select-k (- $k 1) (cdr-list $positions))))
+
+(= (row-safe? $k-col $k-row $positions)
+    (null-list? (filter
+                (lambda1 $x (and (== (cdr-list $x) (list ($k-row)))
+                                 (not (== (car-list $x) $k-col))))
+                $positions)))
+
+(= (col-safe? $k-row $positions)
+    (let $iter (lambda3 $cur $pos $self
+        (if (null-list? $pos)
+            True
+            (if (or (== (cdar-list $pos) (Cons (- $k-row $cur) Nil))
+                    (== (cdar-list $pos) (Cons (+ $k-row $cur) Nil)))
+                False
+                ($self (+ $cur 1) (cdr-list $pos) $self))))
+    ($iter 1 (cdr-list (reverse $positions)) $iter)))
+
+(= (safe? $k $positions)
+    (let (Cons $k-col (Cons $k-row Nil)) (select-k $k $positions)
+        (and (col-safe? $k-row $positions) (row-safe? $k-col $k-row $positions))))
+
+(= (queens $board-size)
+  (let $queen-cols (lambda2 $k $self
+    (if (== $k 0)
+        (list ((empty-board)))
+        (filter
+         (lambda1 $positions (safe? $k $positions))
+         (flatmap
+          (lambda1 $rest-of-queens
+            (map (lambda1 $new-row
+                   (adjoin-position $new-row $k $rest-of-queens))
+                 (enumerate-interval 1 $board-size)))
+          ($self (- $k 1) $self)))))
+  ($queen-cols $board-size $queen-cols)))
+
+! (assertEqual
+    (queens 4)
+    (tree (((1 2) (2 4) (3 1) (4 3)) ((1 3) (2 1) (3 4) (4 2)))))
+.
+\end{verbatim}
+
+\textbf{Key IL translation decisions:}
+
+\begin{itemize}
+\item \textbf{Pattern matching:} The \texttt{Let} node with \texttt{ListCons} patterns preserves MeTTa's unification semantics
+\item \textbf{Closures:} \texttt{Lam(arity, vars, body)} directly represents \texttt{lambdaN} 
+\item \textbf{Control flow:} \texttt{If} nodes mark strict condition, non-strict branches
+\item \textbf{Grounded calls:} All arithmetic/logic remain as \texttt{App} nodes for the backend to implement
+\item \textbf{Data representation:} Position tuples use \texttt{List} nodes to match source semantics
+\end{itemize}
+
+\subsubsection{Why the snippet behaves correctly under the formal semantics}
+
+The implementation's correctness follows from three key properties of our formal semantics:
+
+\textbf{1. Evaluation order preservation:}
+The formal semantics specifies that:
+\begin{itemize}
+\item \texttt{if} evaluates condition before selecting branch 
+\item \texttt{let} evaluates RHS before pattern matching
+\item Function arguments evaluate left-to-right (by convention)
+\end{itemize}
+
+These guarantees ensure:
+\begin{itemize}
+\item Recursive calls terminate (base case checked first)
+\item Pattern destructuring succeeds (values computed before matching)
+\item Side effects occur predictably (though this code is pure)
+\end{itemize}
+
+\textbf{2. Equation-based computation:}
+Each function is a rewrite rule in the knowledge base:
+\begin{itemize}
+\item Calls trigger Query rule 
+\item Pattern variables unify with actual arguments
+\item Body instantiation replaces the call
+\item No special function mechanism needed
+\end{itemize}
+
+This uniform treatment means recursive calls like \texttt{(select-k (- k 1) ...)} work identically to top-level calls.
+
+\textbf{3. Higher-order programming support:}
+The semantics treats lambdas as grounded values that:
+\begin{itemize}
+\item Can be bound to variables via \texttt{let}
+\item Can be passed as arguments to \texttt{map}, \texttt{filter}, etc.
+\item Can be applied via standard function application
+\item Support the self-passing pattern for recursion
+\end{itemize}
+
+The combination enables functional abstraction over the search strategy.
+
+\subsubsection{A tiny reduction trace (sketch)}
+
+To illustrate the complete execution model, we trace key steps of \texttt{(queens 4)}:
+
+\textbf{Initial state:}
+\begin{itemize}
+\item Input register I: \texttt{\{(queens 4)\}}
+\item Knowledge K: All seven function equalities
+\item Work W: \texttt{\{\}}
+\item Output O: \texttt{\{\}}
+\end{itemize}
+
+\textbf{Step 1: Query for queens}
+\begin{itemize}
+\item Match \texttt{(queens 4)} against \texttt{(= (queens \$board-size) ...)}
+\item Unify: \texttt{\$board-size $\rightarrow$ 4}
+\item Move instantiated body to W
+\end{itemize}
+
+\textbf{Step 2: Evaluate let binding}
+\begin{itemize}
+\item Create closure for \texttt{queen-cols}
+\item Bind to variable
+\item Evaluate body: \texttt{(queen-cols 4 queen-cols)}
+\end{itemize}
+
+\textbf{Step 3: Execute queen-cols}
+\begin{itemize}
+\item Check \texttt{(== 4 0)} $\rightarrow$ False
+\item Take else branch
+\item Recursive call: \texttt{(self 3 self)}
+\end{itemize}
+
+\textbf{Step 4-N: Recursive descent}
+\begin{itemize}
+\item Each level generates candidates
+\item Filters for safety
+\item Base case \texttt{k=0} returns \texttt{((Nil))}
+\item Results propagate back up
+\end{itemize}
+
+\textbf{Final: assertEqual verification}
+\begin{itemize}
+\item Compute \texttt{(queens 4)} $\rightarrow$ two solutions
+\item Compare with expected result
+\item Return \texttt{()} on success
+\end{itemize}
+
+The trace confirms that complex algorithms emerge naturally from MeTTa's simple rewrite-based evaluation model.
+
+\subsection{Concrete MeTTa example using sealed}
+
+This example demonstrates MeTTa's \texttt{sealed} construct, which provides hygienic variable renaming to prevent accidental capture. We implement a macro-like function that generates \texttt{let} expressions while avoiding variable capture problems that plague naive macro systems.
+
+\begin{verbatim}
+; -------- macro-like expander that produces a let-program -----------
+(: let-macro (-> Atom Atom Atom Atom))  ; (binder) (rhs) (body) -> expanded program
+
+(= (let-macro $pat $rhs $body)
+   (let $body' (sealed ($pat) $body)
+     (quote (let $pat $rhs $body'))))
+
+; -------- a concrete call: body mentions both $x and $y -------------
+! (let-macro $x (+ 1 2) (Cons $x (Cons $y Nil)))
+\end{verbatim}
+
+\paragraph{The hygiene problem and its solution}
+
+In macro systems, variable capture occurs when a macro-generated binding accidentally shadows a variable from the calling context. Consider what happens without hygiene:
+\begin{itemize}
+\item The macro generates \texttt{(let \$x ... body)}
+\item If the body contains \texttt{\$y}, and the generated code is later placed inside another \texttt{(let \$y ...)}, the inner \texttt{\$y} gets captured
+\item This breaks referential transparency--the meaning of \texttt{\$y} changes unexpectedly
+\end{itemize}
+
+MeTTa's \texttt{sealed} solves this by systematically renaming variables:
+\begin{itemize}
+\item \texttt{(sealed (\$x) body)} renames every variable in body \emph{except} \texttt{\$x}
+\item Variables to preserve (here, the binding variable) are listed explicitly
+\item All other variables get fresh, unique names from a global supply
+\item Result: \texttt{\$y} becomes \texttt{\$y\#1}, preventing capture
+\end{itemize}
+
+\paragraph{How it fits the surface syntax}
+
+\textbf{The \texttt{sealed} special form:}
+\begin{verbatim}
+(sealed (<Variable> ...) <Atom>)
+\end{verbatim}
+
+Key syntactic properties:
+\begin{itemize}
+\item First argument: list of variables to preserve (keep unchanged)
+\item Second argument: the expression to process
+\item Both arguments have type \texttt{Atom} (non-strict positions)
+\item Non-strictness is crucial: we manipulate the syntax tree, not evaluated values
+\end{itemize}
+
+\textbf{Interaction with other forms:}
+
+The \texttt{let} construct:
+\begin{itemize}
+\item Shape: \texttt{(let Pattern Form Body)}
+\item Evaluates Form, unifies with Pattern, substitutes into Body
+\item Body is non-strict (Atom-typed) to enable substitution
+\end{itemize}
+
+The \texttt{quote} construct:
+\begin{itemize}
+\item Prevents evaluation of its argument
+\item Returns the syntax tree as data
+\item Essential for macro expansion--we generate code, not values
+\end{itemize}
+
+\textbf{Grammar compliance:}
+All constructs follow the EBNF from Section 2:
+\begin{itemize}
+\item \texttt{sealed} matches the special form production with designated non-strict positions
+\item \texttt{let-macro} is a standard definitional equality
+\item Variable patterns and applications compose normally
+\end{itemize}
+
+\paragraph{Small-step operational semantics walk-through}
+
+We trace execution through the Meta-MeTTa four-register machine with freshness supply:
+
+$$\langle I, K, W, O \mid \vartheta, M, \nu \rangle$$
+
+Components:
+\begin{itemize}
+\item $I$: Input register (terms to evaluate)
+\item $K$: Knowledge base (equalities and facts)
+\item $W$: Workspace (intermediate computations)
+\item $O$: Output register (final results)
+\item $\nu$: Freshness supply (infinite stream of unique names)
+\end{itemize}
+
+\textbf{Initial configuration:}
+\begin{itemize}
+\item $K$ contains: \texttt{(= (let-macro \$pat \$rhs \$body) ...)}
+\item $I = \{$\texttt{(let-macro \$x (+ 1 2) (Cons \$x (Cons \$y Nil)))}$\}$
+\item $\nu = \langle y\#1, y\#2, x\#1, x\#2, \ldots \rangle$
+\end{itemize}
+
+\textbf{Step 1: Query rule application}
+
+The machine matches the call against the equality:
+\begin{itemize}
+\item Pattern: \texttt{(let-macro \$pat \$rhs \$body)}
+\item Actual: \texttt{(let-macro \$x (+ 1 2) (Cons \$x (Cons \$y Nil)))}
+\item Unification: $\sigma = \{\$pat \mapsto \$x, \$rhs \mapsto \text{(+ 1 2)}, \$body \mapsto \text{(Cons \$x (Cons \$y Nil))}\}$
+\end{itemize}
+
+Instantiated RHS enters workspace:
+\begin{verbatim}
+(let $body' (sealed ($x) (Cons $x (Cons $y Nil))) 
+     (quote (let $x (+ 1 2) $body')))
+\end{verbatim}
+
+\textbf{Step 2: Let evaluation begins}
+
+The let rule requires:
+\begin{enumerate}
+\item Evaluate RHS: \texttt{(sealed (\$x) (Cons \$x (Cons \$y Nil)))}
+\item Unify result with pattern \texttt{\$body'}
+\item Substitute into body
+\end{enumerate}
+
+\textbf{Step 3: Sealed execution (the critical step)}
+
+The SEAL rule performs capture-avoiding substitution:
+
+\begin{itemize}
+\item \textbf{Input term:} $t = \text{(Cons \$x (Cons \$y Nil))}$
+\item \textbf{Variables in $t$:} $\{\$x, \$y\}$
+\item \textbf{Variables to preserve:} $\{\$x\}$
+\item \textbf{Variables to rename:} $\overline{V} = \{\$y\}$
+\item \textbf{Fresh name allocation:} Take $y\#1$ from $\nu$
+\item \textbf{Renaming map:} $\rho = \{\$y \mapsto \$y\#1\}$
+\item \textbf{Result:} $\alpha_{\rho}(t) = \text{(Cons \$x (Cons \$y\#1 Nil))}$
+\end{itemize}
+
+State update: $\nu' = \langle y\#2, x\#1, x\#2, \ldots \rangle$ (consumed one name)
+
+\textbf{Step 4: Complete let binding}
+
+With sealed result \texttt{(Cons \$x (Cons \$y\#1 Nil))}:
+\begin{itemize}
+\item Unify with \texttt{\$body'}: trivial (variable pattern)
+\item Binding: $\{\$body' \mapsto \text{(Cons \$x (Cons \$y\#1 Nil))}\}$
+\item Substitute into body:
+\end{itemize}
+
+\begin{verbatim}
+(quote (let $x (+ 1 2) (Cons $x (Cons $y#1 Nil))))
+\end{verbatim}
+
+\textbf{Step 5: Output}
+
+The quoted term moves to output register $O$. Final result:
+
+\begin{verbatim}
+(quote (let $x (+ 1 2) (Cons $x (Cons $y#1 Nil))))
+\end{verbatim}
+
+Note the crucial transformation: \texttt{\$y} $\rightarrow$ \texttt{\$y\#1}, while \texttt{\$x} remains unchanged.
+
+\paragraph{Why sealed prevents capture (the key insight)}
+
+Consider two scenarios:
+
+\textbf{Without sealed (naive expansion):}
+\begin{verbatim}
+; Generated code
+(let $x (+ 1 2) (Cons $x (Cons $y Nil)))
+
+; If placed in context: (let $y 99 <generated-code>)
+; The inner $y refers to the outer binding (99)
+; Original meaning lost!
+\end{verbatim}
+
+\textbf{With sealed (hygienic expansion):}
+\begin{verbatim}
+; Generated code
+(let $x (+ 1 2) (Cons $x (Cons $y#1 Nil)))
+
+; If placed in context: (let $y 99 <generated-code>)
+; The inner $y#1 is distinct from outer $y
+; Original meaning preserved!
+\end{verbatim}
+
+The fresh name \texttt{\$y\#1} cannot conflict with any user-written variable because the freshness supply guarantees uniqueness.
+
+\paragraph{Optional sanity check}
+
+Direct application shows the renaming clearly:
+
+\begin{verbatim}
+! (sealed ($x) (Cons $x (Cons $y (Cons $y Nil))))
+\end{verbatim}
+
+Result:
+\begin{verbatim}
+(Cons $x (Cons $y#1 (Cons $y#1 Nil)))
+\end{verbatim}
+
+Both occurrences of \texttt{\$y} map to the same fresh name, preserving the identity relationship.
+
+\paragraph{Formal specification summary}
+
+\textbf{Syntax:}
+\begin{verbatim}
+(sealed (<Variable> ...) <Atom>)
+\end{verbatim}
+Both positions non-strict (marked by parser, preserved by transpiler).
+
+\textbf{Semantics (SEAL rule):}
+$$\langle \{(\text{sealed } (v_1 \ldots v_k) \; t)\} \uplus I, K, W, O \mid \nu \rangle \to \langle \{\alpha_{\rho}(t)\} \uplus I, K, W, O \mid \nu' \rangle$$
+
+Where:
+\begin{itemize}
+\item $\rho$: injective renaming for variables not in $\{v_1, \ldots, v_k\}$
+\item $\alpha_{\rho}$: capture-avoiding substitution
+\item $\nu'$: updated freshness supply
+\end{itemize}
+
+\textbf{Design principle:} By evaluating sealed \emph{during} macro expansion (not after), we ensure hygiene before the generated code enters any context where capture could occur.
+
+\subsection{Worked example: sequential composition with \texttt{progn}}
+\label{sec:example-progn}
+
+This example demonstrates \texttt{progn}, MeTTa's sequential composition operator. We show how it enables imperative-style programming with side effects while preserving MeTTa's nondeterministic semantics.
+
+\paragraph{Example program.}
+We create a new space, add one fact to it, print a message, and then
+return one of two colors nondeterministically.
+
+\begin{lstlisting}
+; setup
+(bind! &S (new-space))
+
+; helper: print and return its second argument
+(: pr (-> Atom $t $t))
+(= (pr $msg $v) (progn (println! $msg) $v))
+
+; main: add a fact, print, then choose a color
+! (progn
+     (add-atom &S (Color Red))
+     (pr "after add" 42)
+     (superpose ((Color Red) (Color Blue))))
+\end{lstlisting}
+
+\paragraph{Understanding \texttt{progn}'s role}
+
+MeTTa is fundamentally equation-based with nondeterministic evaluation. The \texttt{progn} construct provides:
+\begin{itemize}
+  \item \textbf{Sequential evaluation:} Subterms evaluate left-to-right
+  \item \textbf{Side effect ordering:} Effects happen in program order
+  \item \textbf{Last-value return:} Result is the value of the final subterm
+  \item \textbf{Nondeterminism preservation:} Branches in any subterm are explored at that point
+\end{itemize}
+
+\paragraph{Surface syntax analysis}
+
+\textbf{Key syntactic properties:}
+\begin{itemize}
+  \item \textbf{Form:} \texttt{(progn <Form> ...)}
+  \item \textbf{Strictness:} ALL positions are strict (evaluated)
+  \item \textbf{Contrast with if/let:} No Atom-typed arguments
+  \item \textbf{Grammar production:} Just a regular application where \texttt{progn} is the head symbol
+\end{itemize}
+
+\textbf{Component analysis:}
+\begin{itemize}
+  \item \texttt{add-atom}: Grounded operation with side effect (modifies space)
+  \item \texttt{println!}: Grounded I/O operation  
+  \item \texttt{superpose}: Nondeterminism introducer (creates branches)
+  \item \texttt{pr}: User-defined sequencing helper
+\end{itemize}
+
+\paragraph{Operational semantics deep dive}
+
+The \texttt{progn} evaluation rules:
+\[
+\text{Base: } (\mathrm{progn}\ e) \to e
+\]
+\[
+\text{Step: } (\mathrm{progn}\ e_1\ e_2\ \ldots\ e_n) \to (\mathrm{progn}\ e_2\ \ldots\ e_n) \text{ after } e_1 \Downarrow v
+\]
+
+Critical properties:
+\begin{itemize}
+  \item \textbf{Strict left-to-right:} $e_1$ must fully reduce before considering $e_2$
+  \item \textbf{Effect sequencing:} Side effects of $e_1$ complete before $e_2$ starts
+  \item \textbf{Error propagation:} If $e_i$ yields Error, entire progn yields Error
+  \item \textbf{Empty propagation:} If $e_i$ yields no results, entire progn yields nothing
+\end{itemize}
+
+\paragraph{Detailed reduction trace}
+
+Initial state: \texttt{progn} with three subterms enters input register.
+
+\textbf{Phase 1: Space modification}
+\begin{itemize}
+  \item Subterm: \texttt{(add-atom \&S (Color Red))}
+  \item Symbol \texttt{S} already bound to a space via \texttt{bind!}
+  \item E\_Add rule: Adds fact \texttt{(Color Red)@S} to knowledge base
+  \item Returns: \texttt{()} (unit value)
+  \item State change: K now contains the new fact
+  \item Continue with: \texttt{(progn (pr "after add" 42) (superpose ...))}
+\end{itemize}
+
+\textbf{Phase 2: Print with value}
+\begin{itemize}
+  \item Subterm: \texttt{(pr "after add" 42)}
+  \item Query rule matches: \texttt{(= (pr \$msg \$v) (progn (println! \$msg) \$v))}
+  \item Unification: \texttt{\$msg $\rightarrow$ "after add", \$v $\rightarrow$ 42}
+  \item Expands to: \texttt{(progn (println! "after add") 42)}
+  \item Inner progn evaluation:
+    \begin{enumerate}
+    \item \texttt{(println! "after add")} executes, prints to console, returns \texttt{()}
+    \item \texttt{(progn 42)} reduces to \texttt{42}
+    \end{enumerate}
+  \item Returns: \texttt{42}
+  \item Continue with: \texttt{(progn (superpose ...))}
+\end{itemize}
+
+\textbf{Phase 3: Nondeterministic result}
+\begin{itemize}
+  \item Subterm: \texttt{(superpose ((Color Red) (Color Blue)))}
+  \item E\_Superpose rule: Creates two branches
+  \item Branch 1: \texttt{(Color Red)}
+  \item Branch 2: \texttt{(Color Blue)}
+  \item Since this is the last subterm, progn returns both values
+\end{itemize}
+
+\textbf{Observable behavior:}
+\begin{itemize}
+  \item Console output: \texttt{"after add"} (printed exactly once)
+  \item Return values: \texttt{\{(Color Red), (Color Blue)\}}
+  \item Space \texttt{S}: Contains \texttt{(Color Red)} fact
+\end{itemize}
+
+\paragraph{The nondeterminism interaction (crucial insight)}
+
+Consider where nondeterminism appears:
+\begin{itemize}
+  \item \textbf{Last position:} Branches become the progn's results
+  \item \textbf{Middle position:} Each branch would continue independently
+  \item \textbf{First position:} Side effects could happen multiple times
+\end{itemize}
+
+Example of middle-position branching:
+\begin{lstlisting}
+(progn
+  (superpose (1 2))     ; Creates 2 branches
+  (println! "hello"))   ; Prints twice!
+\end{lstlisting}
+
+Our example avoids this by placing nondeterminism last, ensuring single execution of effects.
+
+\paragraph{IL lowering strategy}
+
+The transpiler converts \texttt{progn} to nested \texttt{let} with ignore patterns:
+
+\[
+\mathcal{L}\llbracket (\mathrm{progn}\ e_1\ e_2\ e_3) \rrbracket = 
+(\mathrm{let}\ \text{\_p1}\ \mathcal{L}\llbracket e_1\rrbracket\ 
+  (\mathrm{let}\ \text{\_p2}\ \mathcal{L}\llbracket e_2\rrbracket\ 
+    \mathcal{L}\llbracket e_3\rrbracket))
+\]
+
+Why this works:
+\begin{itemize}
+  \item \texttt{let} evaluates its value argument (enforces sequencing)
+  \item Ignore patterns \texttt{\_p1}, \texttt{\_p2} match anything (discard intermediate values)
+  \item Nested structure preserves left-to-right order
+  \item Final expression becomes the result
+\end{itemize}
+
+Concrete lowering:
+\begin{lstlisting}
+(let _p1 (add-atom &S (Color Red))
+  (let _p2 (pr "after add" 42)
+    (superpose ((Color Red) (Color Blue)))))
+\end{lstlisting}
+
+\paragraph{Design implications}
+
+\texttt{progn} bridges two paradigms:
+\begin{itemize}
+  \item \textbf{Functional:} Returns a value, composable, first-class
+  \item \textbf{Imperative:} Sequential effects, ordered execution
+  \item \textbf{Nondeterministic:} Preserves MeTTa's branching semantics
+\end{itemize}
+
+This enables patterns like:
+\begin{itemize}
+  \item Setup-compute-cleanup sequences
+  \item Debugging with print statements
+  \item Transactional operations on spaces
+  \item Imperative algorithms in functional context
+\end{itemize}
+
+\subsection{Concrete Examples of User-Configurable Evaluation Order}
+
+These examples demonstrate a proposed extension allowing programmers to control evaluation order and strictness per function. This addresses a fundamental tension in language design: different algorithms benefit from different evaluation strategies.
+
+\subsubsection{Example 1 --- Left-to-right vs right-to-left evaluation}
+
+This example shows how evaluation order affects observable behavior when side effects are present.
+
+\begin{verbatim}
+; print-and-return helper (effects only via println!, returns $v)
+(: pr (-> String $t $t))
+(= (pr $msg $v) (let $u (println! $msg) $v))
+
+; LTR version
+(: seq2 (-> $t $t (Pair $t $t)))
+(= (seq2 $x $y) (Pair $x $y))
+(eval-policy seq2 (args val val) (order ltr))
+
+; RTL version
+(: seq2-rtl (-> $t $t (Pair $t $t)))
+(= (seq2-rtl $x $y) (Pair $x $y))
+(eval-policy seq2-rtl (args val val) (order rtl))
+
+; Calls to make order observable
+! (seq2     (pr "A" 1) (pr "B" 2))    ; prints A then B; result (Pair 1 2)
+! (seq2-rtl (pr "A" 1) (pr "B" 2))    ; prints B then A; result (Pair 1 2)
+\end{verbatim}
+
+\paragraph{The evaluation order problem}
+
+Most languages fix evaluation order globally:
+\begin{itemize}
+\item \textbf{Left-to-right:} C, Java, Python (predictable, matches reading order)
+\item \textbf{Right-to-left:} Some functional languages (enables optimizations)
+\item \textbf{Unspecified:} C++ before C++17 (allows compiler freedom)
+\end{itemize}
+
+MeTTa's approach: Let the function author decide, not the language designer.
+
+\paragraph{Observable behavior}
+
+For \texttt{(seq2 (pr "A" 1) (pr "B" 2))} the console prints:
+\begin{verbatim}
+A
+B
+\end{verbatim}
+
+For \texttt{(seq2-rtl (pr "A" 1) (pr "B" 2))} the console prints:
+\begin{verbatim}
+B
+A
+\end{verbatim}
+
+Both return \texttt{(Pair 1 2)}--the values are identical, only the effect order differs.
+
+\paragraph{How the policy mechanism works}
+
+\textbf{The policy declaration:}
+\begin{verbatim}
+(eval-policy <function> (args <mode>...) (order <spec>))
+\end{verbatim}
+
+Components:
+\begin{itemize}
+\item \textbf{Function:} Which symbol gets the policy
+\item \textbf{Modes:} How each argument is evaluated
+  \begin{itemize}
+  \item \texttt{val}: Evaluate before call (call-by-value)
+  \item \texttt{name}: Pass unevaluated (call-by-name)
+  \item \texttt{need}: Evaluate on demand with memoization (call-by-need)
+  \end{itemize}
+\item \textbf{Order:} In what sequence (\texttt{ltr}, \texttt{rtl}, or custom)
+\end{itemize}
+
+\textbf{Operational semantics with policies:}
+
+When evaluating \texttt{(f arg1 arg2)}:
+\begin{enumerate}
+\item Look up policy $\Pi(f)$
+\item \textbf{Argument preparation phase:}
+   \begin{itemize}
+   \item For each \texttt{val} argument: evaluate it
+   \item For each \texttt{name} argument: wrap as thunk
+   \item For each \texttt{need} argument: wrap as memoized thunk
+   \item Follow the specified order
+   \end{itemize}
+\item Form the call with prepared arguments
+\item Apply the function's equation via Query rule
+\end{enumerate}
+
+\textbf{Detailed trace for \texttt{seq2}:}
+
+Call: \texttt{(seq2 (pr "A" 1) (pr "B" 2))}
+
+\begin{enumerate}
+\item Policy lookup: $\Pi(\text{seq2}) = (\text{args: [val, val], order: ltr})$
+\item Argument preparation (left-to-right):
+   \begin{itemize}
+   \item Evaluate arg1: \texttt{(pr "A" 1)}
+     \begin{itemize}
+     \item Prints "A"
+     \item Returns 1
+     \end{itemize}
+   \item Evaluate arg2: \texttt{(pr "B" 2)}
+     \begin{itemize}
+     \item Prints "B"
+     \item Returns 2
+     \end{itemize}
+   \end{itemize}
+\item Form call: \texttt{(seq2 1 2)}
+\item Query matches: \texttt{(= (seq2 \$x \$y) (Pair \$x \$y))}
+\item Result: \texttt{(Pair 1 2)}
+\end{enumerate}
+
+For \texttt{seq2-rtl}, the only difference is step 2 evaluates right-to-left, printing "B" before "A".
+
+\paragraph{Why this matters}
+
+Evaluation order affects:
+\begin{itemize}
+\item \textbf{Side effect sequencing:} I/O, mutations, exceptions
+\item \textbf{Performance:} Some orders enable better optimization
+\item \textbf{Resource management:} Order of acquisition/release
+\item \textbf{Debugging:} Predictable execution aids understanding
+\end{itemize}
+
+By making it per-function, MeTTa allows:
+\begin{itemize}
+\item Mathematical functions: any order (enables parallelism)
+\item I/O functions: strict left-to-right (predictable effects)
+\item Control structures: custom patterns (short-circuiting)
+\end{itemize}
+
+\subsubsection{Example 2 --- Short-circuiting with by-need (lazy) argument}
+
+This example implements short-circuit evaluation, where the second argument is only evaluated if necessary.
+
+\begin{verbatim}
+; Short-circuit AND: left strict, right by-need
+(: my-and (-> Bool (-> Bool) Bool))     ; suggestive: right treated as thunk
+(eval-policy my-and (args val need) (order ltr))
+
+(= (my-and True  $rhs) (force $rhs))    ; force only when left is True
+(= (my-and False $rhs) False)
+
+; A right-hand side with a visible effect when forced:
+(: rhs-demo (-> Bool))
+(= (rhs-demo) (pr "RHS evaluated" True))
+
+! (my-and False (rhs-demo))             ; prints nothing; result False
+! (my-and True  (rhs-demo))             ; prints "RHS evaluated"; result True
+\end{verbatim}
+
+\paragraph{The short-circuiting pattern}
+
+Short-circuit evaluation is fundamental for:
+\begin{itemize}
+\item \textbf{Efficiency:} Avoid unnecessary computation
+\item \textbf{Safety:} Prevent errors (e.g., \texttt{x != 0 \&\& 1/x > 2})
+\item \textbf{Control flow:} Conditional execution without explicit if
+\end{itemize}
+
+Most languages hard-code this for Boolean operators. MeTTa makes it programmable.
+
+\paragraph{Observable behavior analysis}
+
+\textbf{Case 1: \texttt{(my-and False (rhs-demo))}}
+\begin{itemize}
+\item No console output
+\item Returns \texttt{False}
+\item \texttt{rhs-demo} never executes
+\end{itemize}
+
+\textbf{Case 2: \texttt{(my-and True (rhs-demo))}}
+\begin{itemize}
+\item Prints "RHS evaluated"
+\item Returns \texttt{True}
+\item \texttt{rhs-demo} executes exactly once
+\end{itemize}
+
+\paragraph{The by-need evaluation model}
+
+Three evaluation strategies for arguments:
+\begin{itemize}
+\item \textbf{By-value (eager):} Evaluate before call
+  \begin{itemize}
+  \item Pro: Simple, predictable
+  \item Con: May do unnecessary work
+  \end{itemize}
+\item \textbf{By-name (lazy):} Pass unevaluated, evaluate each use
+  \begin{itemize}
+  \item Pro: Avoids unneeded evaluation
+  \item Con: May duplicate work if used multiple times
+  \end{itemize}
+\item \textbf{By-need (lazy with memoization):} Evaluate on first use, cache result
+  \begin{itemize}
+  \item Pro: Best of both worlds
+  \item Con: Requires memoization machinery
+  \end{itemize}
+\end{itemize}
+
+\paragraph{Detailed operational semantics}
+
+\textbf{Policy specification:}
+\begin{verbatim}
+(eval-policy my-and (args val need) (order ltr))
+\end{verbatim}
+
+Interpretation:
+\begin{itemize}
+\item First argument: \texttt{val} (evaluate to Bool)
+\item Second argument: \texttt{need} (wrap as memoized thunk)
+\item Order: left-to-right (though only first is strict)
+\end{itemize}
+
+\textbf{Execution trace for \texttt{(my-and False (rhs-demo))}:}
+
+\begin{enumerate}
+\item Policy lookup: $\Pi(\text{my-and}) = (\text{val}, \text{need})$
+\item Argument preparation:
+   \begin{itemize}
+   \item Arg1 (\texttt{val}): Evaluate \texttt{False} $\rightarrow$ \texttt{False}
+   \item Arg2 (\texttt{need}): Create thunk $\theta = \text{thunk}(\text{rhs-demo})$
+   \end{itemize}
+\item Form call: \texttt{(my-and False} $\theta$\texttt{)}
+\item Query matches: \texttt{(= (my-and False \$rhs) False)}
+\item Unification: \texttt{\$rhs} $\rightarrow$ $\theta$
+\item Result: \texttt{False}
+\item Thunk $\theta$ is never forced--no side effects occur
+\end{enumerate}
+
+\textbf{Execution trace for \texttt{(my-and True (rhs-demo))}:}
+
+\begin{enumerate}
+\item Same policy lookup and preparation
+\item Form call: \texttt{(my-and True} $\theta$\texttt{)}
+\item Query matches: \texttt{(= (my-and True \$rhs) (force \$rhs))}
+\item Unification: \texttt{\$rhs} $\rightarrow$ $\theta$
+\item Evaluate body: \texttt{(force} $\theta$\texttt{)}
+\item Force operation:
+   \begin{itemize}
+   \item Check memo table: not computed yet
+   \item Evaluate thunk body: \texttt{(rhs-demo)}
+   \item This prints "RHS evaluated" and returns \texttt{True}
+   \item Cache result in memo table
+   \end{itemize}
+\item Result: \texttt{True}
+\end{enumerate}
+
+\paragraph{The force/delay mechanism}
+
+Conceptual rules added to the semantics:
+
+\textbf{Delay (implicit via policy):}
+\[
+\text{If arg}_i \text{ has mode 'need':} \quad e_i \Rightarrow \text{thunk}_\alpha(e_i)
+\]
+
+\textbf{Force (explicit in equations):}
+\[
+\text{force}(\text{thunk}_\alpha(e)) \to 
+\begin{cases}
+v & \text{if } \alpha \text{ already computed to } v \\
+\text{evaluate } e \text{ and memoize} & \text{otherwise}
+\end{cases}
+\]
+
+\paragraph{Design implications}
+
+This mechanism enables:
+\begin{itemize}
+\item \textbf{Custom control structures:} Build your own if/while/for
+\item \textbf{Infinite data structures:} Streams, lazy lists
+\item \textbf{Optimization hints:} Mark expensive arguments as by-need
+\item \textbf{Domain-specific evaluation:} Tailor to algorithm needs
+\end{itemize}
+
+\subsubsection{Synthesis: evaluation order as a first-class concern}
+
+These examples demonstrate that evaluation strategy profoundly affects:
+\begin{itemize}
+\item \textbf{Correctness:} When side effects are present
+\item \textbf{Performance:} What gets computed when
+\item \textbf{Expressiveness:} What patterns are natural
+\end{itemize}
+
+MeTTa's approach--per-function policies--provides:
+\begin{itemize}
+\item \textbf{Local reasoning:} Each function documents its strategy
+\item \textbf{Composability:} Different strategies coexist
+\item \textbf{Evolution:} Change strategy without changing callers
+\item \textbf{Optimization:} Choose the best strategy per algorithm
+\end{itemize}
+
+The IL compilation preserves these semantics through:
+\begin{itemize}
+\item Policy tables in module headers
+\item Explicit delay/force nodes
+\item Order-respecting argument evaluation
+\item Thunk representation with memoization support
+\end{itemize}
+
+\subsubsection{Takeaway}
+
+The key insight: evaluation order is not a language property but a function property. Different functions have different optimal strategies. MeTTa's policy system makes this explicit and programmable, enabling:
+\begin{itemize}
+\item Mathematical functions with parallel evaluation
+\item I/O functions with strict sequencing  
+\item Control structures with short-circuiting
+\item Data structures with lazy construction
+\end{itemize}
+
+All coexisting in the same program, each using its optimal strategy.
+
+\begin{thebibliography}{9}
+
+\bibitem{MetaMeTTa}
+L.~G.~Meredith, B.~Goertzel, J.~Warrell, and A.~Vandervorst,
+\textit{Meta-MeTTa: an operational semantics for MeTTa},
+arXiv:2305.17218 (2023).
+
+\bibitem{Goertzel2023Hyperon}
+B.~Goertzel, V.~Bogdanov, M.~Duncan, D.~Duong, Z.~Goertzel, J.~Horlings, M.~Ikle', L.~G.~Meredith, A.~Potapov, A.~L.~de Senna, H.~Seid Andres Suarez, A.~Vandervorst, and R.~Werko,
+\textit{OpenCog Hyperon: A Framework for AGI at the Human Level and Beyond},
+arXiv:2310.18318 (2023).
+
+\bibitem{metta-calculus}
+L.~G.~Meredith,
+\textit{MeTTa Calculus (draft)},
+\url{https://github.com/leithaus/rho4u/blob/main/metta-calculus/metta-calculus.pdf}
+
+\bibitem{MettaCycle}
+L.~G.~Meredith,
+\textit{MettaCycle Architecture Proposal},
+\url{https://github.com/leithaus/rho4u/blob/main/hypercube/map.pdf}
+
+
+
+\end{thebibliography}
+
+\end{document}
