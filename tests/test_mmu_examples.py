@@ -28,6 +28,7 @@ CASES = [
     ("tests/mm0_mmu/bad_conv.mmu", True),
     ("tests/mm0_mmu/conv.mmu", False),
     ("tests/mm0_mmu/bad_unfold.mmu", True),
+    ("tests/mm0_mmu/bad_refl.mmu", True),
 ]
 
 

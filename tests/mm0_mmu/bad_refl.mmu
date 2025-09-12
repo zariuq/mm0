@@ -1,0 +1,3 @@
+(sort wff provable)
+(pub theorem refl ((p wff ())) ((h p)) p ()
+  (:conv p (:refl p) h))

@@ -1,4 +1,4 @@
 (sort wff provable)
 (pub def id ((p wff ())) (wff ()) () p)
 (pub theorem bad_unfold ((p wff ()) (q wff ())) ((h q)) p ()
-  (:conv p (:unfold id (p) () (:refl q)) h))
+  (:conv p (:unfold id (p) () q) h))

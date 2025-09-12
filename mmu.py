@@ -184,9 +184,6 @@ class MMUVerifier:
             e = self._read_expr(ast, env)
             return e, e
         name = ast[0]
-        if name == ':refl':
-            e = self._read_expr(ast[1], env)
-            return e, e
         if name == ':sym':
             lhs, rhs = self._eval_conv(ast[1], env, hyps)
             return rhs, lhs
@@ -197,11 +194,12 @@ class MMUVerifier:
                 raise ValueError('trans mismatch')
             return lhs1, rhs2
         if name == ':unfold':
-            if len(ast) not in (4, 5):
+            if len(ast) != 5:
                 raise ValueError('invalid :unfold')
             term_name = ast[1]
             args_ast = ast[2]
             dummy_ast = ast[3]
+            conv_ast = ast[4]
             if term_name not in self.terms:
                 raise ValueError(f'unknown term {term_name}')
             term = self.terms[term_name]
@@ -219,8 +217,11 @@ class MMUVerifier:
                 if d_val.sort != dsort:
                     raise ValueError('dummy sort mismatch in unfold')
                 subst[dvar] = d_val
-            rhs = self._instantiate(term.def_body, subst)
-            return lhs, rhs
+            body = self._instantiate(term.def_body, subst)
+            lhs2, rhs2 = self._eval_conv(conv_ast, env, hyps)
+            if lhs2 != body:
+                raise ValueError('unfold body mismatch')
+            return lhs, rhs2
         # general term application
         args = [self._eval_conv(a, env, hyps) for a in ast[1:]]
         lhs_args = [a[0] for a in args]

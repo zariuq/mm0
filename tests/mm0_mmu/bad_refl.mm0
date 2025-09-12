@@ -1,0 +1,3 @@
+provable sort wff;
+
+theorem refl (p: wff) (h: p): $ p $;
