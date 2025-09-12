@@ -184,6 +184,11 @@ class MMUVerifier:
             e = self._read_expr(ast, env)
             return e, e
         name = ast[0]
+        if name == ':refl':
+            if len(ast) != 2:
+                raise ValueError('invalid :refl')
+            e = self._read_expr(ast[1], env)
+            return e, e
         if name == ':sym':
             lhs, rhs = self._eval_conv(ast[1], env, hyps)
             return rhs, lhs

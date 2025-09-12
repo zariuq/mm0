@@ -1,4 +1,4 @@
+delimiter $ ( ) $;
 provable sort wff;
 
-theorem bad (p: wff): foo p;
-
+theorem bad (p: wff): $ foo p $;

@@ -1,6 +1,4 @@
+delimiter $ ( ) $;
 provable sort wff;
-
 term id (p: wff): wff;
-
-theorem good (p: wff) (h: p): $ p $;
-
+theorem good (p: wff) (h: $ p $): $ p $;
