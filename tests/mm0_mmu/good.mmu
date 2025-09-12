@@ -1,0 +1,3 @@
+(sort wff provable)
+(term id ((p wff ())) (wff ()))
+(pub theorem good ((p wff ())) ((h p)) p () h)

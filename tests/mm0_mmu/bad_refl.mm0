@@ -1,0 +1,6 @@
+delimiter $ ( ) $;
+provable sort wff;
+
+def id (p: wff): wff = $ p $;
+
+theorem bad_refl (p: wff) (h: $ id p $): $ p $;

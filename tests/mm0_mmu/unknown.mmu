@@ -1,0 +1,2 @@
+(sort wff provable)
+(pub theorem bad ((p wff ())) () (foo p) () (foo p))

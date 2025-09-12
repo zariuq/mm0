@@ -1,0 +1,4 @@
+(sort wff provable)
+(pub def id ((p wff ())) (wff ()) () p)
+(pub theorem bad_refl ((p wff ())) ((h (id p))) p ()
+  (:conv p (:refl (id p)) h))

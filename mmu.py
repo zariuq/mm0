@@ -1,6 +1,6 @@
 import logging
-from dataclasses import dataclass
-from typing import List, Tuple, Dict
+from dataclasses import dataclass, field
+from typing import List, Tuple, Dict, Optional
 
 # Simple s-expression parser for MMU files
 
@@ -10,6 +10,12 @@ def _tokenize(text: str):
     n = len(text)
     while i < n:
         c = text[i]
+        # Line comments start with '--' and run to end of line
+        if c == '-' and i + 1 < n and text[i + 1] == '-':
+            # Skip the rest of the line
+            while i < n and text[i] != '\n':
+                i += 1
+            continue
         if c.isspace():
             i += 1
             continue
@@ -67,6 +73,8 @@ class Term:
     name: str
     args: List[Tuple[str, str]]  # (var, sort)
     ret: str
+    def_body: Optional[Expr] = None
+    dummy: List[Tuple[str, str]] = field(default_factory=list)
 
 @dataclass
 class Thm:
@@ -88,6 +96,8 @@ class MMUVerifier:
         env = {}
         for item in params_ast:
             var, sort = item[0], item[1]
+            if sort not in self.sorts:
+                raise ValueError(f'unknown sort {sort}')
             params.append((var, sort))
             env[var] = sort
         return params, env
@@ -174,17 +184,49 @@ class MMUVerifier:
             e = self._read_expr(ast, env)
             return e, e
         name = ast[0]
+        if name == ':refl':
+            if len(ast) != 2:
+                raise ValueError('invalid :refl')
+            e = self._read_expr(ast[1], env)
+            return e, e
         if name == ':sym':
             lhs, rhs = self._eval_conv(ast[1], env, hyps)
             return rhs, lhs
+        if name == ':trans':
+            lhs1, rhs1 = self._eval_conv(ast[1], env, hyps)
+            lhs2, rhs2 = self._eval_conv(ast[2], env, hyps)
+            if rhs1 != lhs2:
+                raise ValueError('trans mismatch')
+            return lhs1, rhs2
         if name == ':unfold':
+            if len(ast) != 5:
+                raise ValueError('invalid :unfold')
             term_name = ast[1]
             args_ast = ast[2]
-            body_ast = ast[4]
-            args_lhs = [self._read_expr(a, env) for a in args_ast]
-            lhs = Expr('term', term_name, tuple(args_lhs), self.terms[term_name].ret)
-            _lhs, body = self._eval_conv(body_ast, env, hyps)
-            return lhs, body
+            dummy_ast = ast[3]
+            conv_ast = ast[4]
+            if term_name not in self.terms:
+                raise ValueError(f'unknown term {term_name}')
+            term = self.terms[term_name]
+            if term.def_body is None:
+                raise ValueError('cannot unfold non-definition')
+            args = [self._read_expr(a, env) for a in args_ast]
+            if len(args) != len(term.args):
+                raise ValueError('arity mismatch in unfold')
+            if len(dummy_ast) != len(term.dummy):
+                raise ValueError('dummy count mismatch in unfold')
+            lhs = Expr('term', term_name, tuple(args), term.ret)
+            subst = {var: arg for (var, _), arg in zip(term.args, args)}
+            for (dvar, dsort), d_ast in zip(term.dummy, dummy_ast):
+                d_val = self._read_expr(d_ast, env)
+                if d_val.sort != dsort:
+                    raise ValueError('dummy sort mismatch in unfold')
+                subst[dvar] = d_val
+            body = self._instantiate(term.def_body, subst)
+            lhs2, rhs2 = self._eval_conv(conv_ast, env, hyps)
+            if lhs2 != body:
+                raise ValueError('unfold body mismatch')
+            return lhs, rhs2
         # general term application
         args = [self._eval_conv(a, env, hyps) for a in ast[1:]]
         lhs_args = [a[0] for a in args]
@@ -205,8 +247,15 @@ class MMUVerifier:
         name = stmt[1]
         args_ast = stmt[2]
         ret_ast = stmt[3]
-        args = [(v[0], v[1]) for v in args_ast]
-        self.terms[name] = Term(name, args, ret_ast[0])
+        args = []
+        for v in args_ast:
+            if v[1] not in self.sorts:
+                raise ValueError(f'unknown sort {v[1]}')
+            args.append((v[0], v[1]))
+        ret_sort = ret_ast[0]
+        if ret_sort not in self.sorts:
+            raise ValueError(f'unknown sort {ret_sort}')
+        self.terms[name] = Term(name, args, ret_sort)
 
     def _handle_def(self, stmt):
         name = stmt[1]
@@ -214,15 +263,23 @@ class MMUVerifier:
         ret_ast = stmt[3]
         dummy_ast = stmt[4]
         expr_ast = stmt[5]
-        args = [(v[0], v[1]) for v in args_ast]
-        term = Term(name, args, ret_ast[0])
+        args = []
+        for v in args_ast:
+            if v[1] not in self.sorts:
+                raise ValueError(f'unknown sort {v[1]}')
+            args.append((v[0], v[1]))
+        ret_sort = ret_ast[0]
+        if ret_sort not in self.sorts:
+            raise ValueError(f'unknown sort {ret_sort}')
+        dummy_params, dummy_env = self._parse_params(dummy_ast)
+        term = Term(name, args, ret_sort, dummy=dummy_params)
         self.terms[name] = term
         _, env = self._parse_params(args_ast)
-        _, dummy_env = self._parse_params(dummy_ast)
         env.update(dummy_env)
         expr = self._read_expr(expr_ast, env)
         if expr.sort != term.ret:
             raise ValueError('definition sort mismatch')
+        term.def_body = expr
 
     def _handle_axiom(self, stmt):
         name = stmt[1]
@@ -266,15 +323,23 @@ class MMUVerifier:
             ret_ast = stmt[4]
             dummy_ast = stmt[5]
             expr_ast = stmt[6]
-            args = [(v[0], v[1]) for v in params_ast]
-            term = Term(name, args, ret_ast[0])
+            args = []
+            for v in params_ast:
+                if v[1] not in self.sorts:
+                    raise ValueError(f'unknown sort {v[1]}')
+                args.append((v[0], v[1]))
+            ret_sort = ret_ast[0]
+            if ret_sort not in self.sorts:
+                raise ValueError(f'unknown sort {ret_sort}')
+            dummy_params, dummy_env = self._parse_params(dummy_ast)
+            term = Term(name, args, ret_sort, dummy=dummy_params)
             self.terms[name] = term
             _, env = self._parse_params(params_ast)
-            _, dummy_env = self._parse_params(dummy_ast)
             env.update(dummy_env)
             expr = self._read_expr(expr_ast, env)
             if expr.sort != term.ret:
                 raise ValueError('definition sort mismatch')
+            term.def_body = expr
         else:
             self.logger.warning('unknown local statement')
 
@@ -288,13 +353,18 @@ class MMUVerifier:
         params, env = self._parse_params(params_ast)
         _, dummy_env = self._parse_params(dummy_ast)
         env.update(dummy_env)
-        hyps = [self._read_expr(h, env) for h in hyps_ast]
-        concl = self._read_expr(concl_ast, env)
-        hyp_env = {}
-        for h_expr, h_ast in zip(hyps, hyps_ast):
-            label = h_ast[0] if isinstance(h_ast, list) and len(h_ast) == 2 else None
+        hyps = []
+        hyp_env: Dict[str, Expr] = {}
+        for h_ast in hyps_ast:
+            if isinstance(h_ast, list) and len(h_ast) == 2:
+                label, expr_ast = h_ast
+            else:
+                label, expr_ast = None, h_ast
+            h_expr = self._read_expr(expr_ast, env)
+            hyps.append(h_expr)
             if label:
                 hyp_env[label] = h_expr
+        concl = self._read_expr(concl_ast, env)
         res = self._eval_proof(proof_ast, env, hyp_env)
         if res != concl:
             raise ValueError(
