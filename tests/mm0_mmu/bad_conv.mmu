@@ -1,0 +1,3 @@
+(sort wff provable)
+(term id ((p wff ())) (wff ()))
+(pub theorem bad_conv ((p wff ())) ((h (id p))) p () (:conv p p h))

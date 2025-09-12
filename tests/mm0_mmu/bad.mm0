@@ -1,0 +1,6 @@
+provable sort wff;
+
+term id (p: wff): wff;
+
+theorem bad (p: wff) (h: p): p;
+

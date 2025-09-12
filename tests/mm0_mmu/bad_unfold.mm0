@@ -1,0 +1,5 @@
+provable sort wff;
+
+def id (p: wff): wff = p;
+
+theorem bad_unfold (p q: wff) (h: q): $ p $;

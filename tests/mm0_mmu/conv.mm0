@@ -1,0 +1,9 @@
+provable sort wff;
+
+def id (p: wff): wff = p;
+
+theorem refl_thm (p: wff) (h: p): $ p $;
+
+theorem unfold_thm (p: wff) (h: p): $ id p $;
+
+theorem trans_thm (p: wff) (h: id p): $ id p $;
