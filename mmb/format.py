@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .io import BR, check_ptr
+from .ast import Expr
 
 
 @dataclass
@@ -207,10 +208,11 @@ def read_thm_params(m: MMBFile, th: ThmEntry) -> list[TypeInfo]:
 
 @dataclass
 class SymbolTable:
-    """Arity metadata for term and theorem references."""
+    """Arity/definition metadata for term and theorem references."""
 
     term_arity: list[int]
     thm_arity: list[int]
+    term_defs: list[Expr | None]
 
 
 def build_symbols(m: MMBFile) -> SymbolTable:
@@ -219,6 +221,7 @@ def build_symbols(m: MMBFile) -> SymbolTable:
     return SymbolTable(
         term_arity=[te.num_args for te in m.terms],
         thm_arity=[th.num_args for th in m.thms],
+        term_defs=[None] * len(m.terms),
     )
 
 
@@ -308,8 +311,8 @@ class ProofReader:
             yield c
 
 
-def run_proof_payload(sym: SymbolTable, buf: memoryview) -> None:
-    """Execute a proof payload with basic stack discipline checks."""
+def run_proof_payload(sym: SymbolTable, buf: memoryview, *, require_goal: bool = True) -> None:
+    """Execute a proof payload with convertibility checks."""
 
     from .cmd import read_cmd, ProofOp
     from .vm import ProofVM, VMError
@@ -322,6 +325,7 @@ def run_proof_payload(sym: SymbolTable, buf: memoryview) -> None:
             if c.op == ProofOp.END:
                 break
             vm.step(c)
+        vm.finish(require_goal=require_goal)
     except Exception as e:
         raise VMError(f"proof decode/stack error at +{r.i}: {e}")
 

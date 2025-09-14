@@ -17,9 +17,11 @@ from mmb.format import (
     ProofReader,
     build_symbols,
     run_proof_payload,
+    SymbolTable,
 )
 from mmb.cmd import read_cmd, Cmd, StmtOp, ProofOp, UnifyOp
 from mmb.unify import run_unify
+from mmb.ast import Expr
 from test_mmb import ensure_peano_mmb
 
 
@@ -193,7 +195,7 @@ def test_proofvm_stack_discipline_smoke():
     if k0 is not None:
         payload += enc_cmd(ProofOp.TERM, k0)
     payload += enc_cmd(ProofOp.END)
-    run_proof_payload(sym, memoryview(bytes(payload)))
+    run_proof_payload(sym, memoryview(bytes(payload)), require_goal=False)
 
 
 def test_proofvm_underflow():
@@ -209,7 +211,7 @@ def test_proofvm_ref_heap():
     fmt = load_mmb(ensure_peano_mmb().read_bytes(), strict_align=False)
     sym = build_symbols(fmt)
     payload = enc_cmd(ProofOp.HYP) + enc_cmd(ProofOp.SAVE) + enc_cmd(ProofOp.REF, 0) + enc_cmd(ProofOp.END)
-    run_proof_payload(sym, memoryview(payload))
+    run_proof_payload(sym, memoryview(payload), require_goal=False)
 
 
 def test_proofvm_ref_oob():
@@ -231,13 +233,105 @@ def test_proofvm_term_thm_save_ref():
     if t0 is not None:
         payload += enc_cmd(ProofOp.THM_SAVE, t0)
     payload += enc_cmd(ProofOp.REF, 0) + enc_cmd(ProofOp.END)
-    run_proof_payload(sym, memoryview(bytes(payload)))
+    run_proof_payload(sym, memoryview(bytes(payload)), require_goal=False)
 
 
-def test_proofvm_cong_unimplemented():
-    fmt = load_mmb(ensure_peano_mmb().read_bytes(), strict_align=False)
-    sym = build_symbols(fmt)
-    payload = enc_cmd(ProofOp.CONG) + enc_cmd(ProofOp.END)
+# ---------------------------------------------------------------------------
+# Convertibility and congruence tests
+
+
+def make_sym(term_arity, term_defs=None):
+    if term_defs is None:
+        term_defs = [None] * len(term_arity)
+    return SymbolTable(term_arity=list(term_arity), thm_arity=[], term_defs=list(term_defs))
+
+
+def test_proofvm_conv_refl():
+    sym = make_sym([])
+    payload = enc_cmd(ProofOp.HYP) + enc_cmd(ProofOp.REFL) + enc_cmd(ProofOp.CONV) + enc_cmd(ProofOp.END)
+    run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_leftover_conv():
+    sym = make_sym([])
+    payload = enc_cmd(ProofOp.HYP) + enc_cmd(ProofOp.REFL) + enc_cmd(ProofOp.END)
+    with pytest.raises(Exception):
+        run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_cong():
+    sym = make_sym([1])
+    payload = (
+        enc_cmd(ProofOp.HYP) + enc_cmd(ProofOp.REFL) + enc_cmd(ProofOp.CONG, 0) + enc_cmd(ProofOp.CONV) + enc_cmd(ProofOp.END)
+    )
+    run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_cong_arity_mismatch():
+    sym = make_sym([2])
+    payload = enc_cmd(ProofOp.HYP) + enc_cmd(ProofOp.REFL) + enc_cmd(ProofOp.CONG, 0) + enc_cmd(ProofOp.END)
+    with pytest.raises(Exception):
+        run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_unfold():
+    body = Expr("var", 0, (), 0)
+    sym = make_sym([1], [body])
+    payload = (
+        enc_cmd(ProofOp.HYP) + enc_cmd(ProofOp.UNFOLD, 0) + enc_cmd(ProofOp.CONV) + enc_cmd(ProofOp.END)
+    )
+    run_proof_payload(sym, memoryview(payload), require_goal=False)
+
+
+def test_proofvm_unfold_non_def():
+    sym = make_sym([1])
+    payload = enc_cmd(ProofOp.HYP) + enc_cmd(ProofOp.UNFOLD, 0) + enc_cmd(ProofOp.END)
+    with pytest.raises(Exception):
+        run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_conv_save_ref():
+    sym = make_sym([])
+    payload = (
+        enc_cmd(ProofOp.HYP)
+        + enc_cmd(ProofOp.REFL)
+        + enc_cmd(ProofOp.CONV_SAVE)
+        + enc_cmd(ProofOp.REF, 0)
+        + enc_cmd(ProofOp.CONV)
+        + enc_cmd(ProofOp.END)
+    )
+    run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_conv_cut():
+    sym = make_sym([])
+    payload = (
+        enc_cmd(ProofOp.HYP)
+        + enc_cmd(ProofOp.REFL)
+        + enc_cmd(ProofOp.CONV_SAVE)
+        + enc_cmd(ProofOp.HYP)
+        + enc_cmd(ProofOp.REFL)
+        + enc_cmd(ProofOp.REF, 0)
+        + enc_cmd(ProofOp.CONV_CUT)
+        + enc_cmd(ProofOp.CONV)
+        + enc_cmd(ProofOp.END)
+    )
+    run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_conv_cut_mismatch():
+    sym = make_sym([])
+    payload = (
+        enc_cmd(ProofOp.HYP)
+        + enc_cmd(ProofOp.REFL)
+        + enc_cmd(ProofOp.CONV_SAVE)
+        + enc_cmd(ProofOp.HYP)
+        + enc_cmd(ProofOp.REFL)
+        + enc_cmd(ProofOp.REF, 0)
+        + enc_cmd(ProofOp.SYM)
+        + enc_cmd(ProofOp.CONV_CUT)
+        + enc_cmd(ProofOp.END)
+    )
     with pytest.raises(Exception):
         run_proof_payload(sym, memoryview(payload))
 

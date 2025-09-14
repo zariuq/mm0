@@ -1,56 +1,67 @@
 """Minimal equality kernel used by the MMB verifier."""
 from __future__ import annotations
 
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Iterable, Dict
 
-from .ast import Expr, Term
-
-
-def refl(e: Expr) -> tuple[Expr, Expr]:
-    return e, e
+from .ast import Expr
 
 
-def sym(c: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
-    lhs, rhs = c
-    return rhs, lhs
+@dataclass
+class Eq:
+    """A simple equality pair ``lhs ≈ rhs`` of a given sort."""
+
+    lhs: Expr
+    rhs: Expr
+    sort: int
 
 
-def trans(c1: tuple[Expr, Expr], c2: tuple[Expr, Expr]) -> tuple[Expr, Expr]:
-    l1, r1 = c1
-    l2, r2 = c2
-    if r1 != l2:
-        raise ValueError('trans mismatch')
-    return l1, r2
+def refl(e: Expr) -> Eq:
+    """Reflexivity."""
+
+    return Eq(e, e, e.sort)
 
 
-def cong(head: Expr, args: Iterable[tuple[Expr, Expr]]) -> tuple[Expr, Expr]:
-    """Congruence for application."""
-    lhs_args = []
-    rhs_args = []
-    for l, r in args:
-        lhs_args.append(l)
-        rhs_args.append(r)
-    lhs = Expr('app', head.index, tuple(lhs_args), head.sort)
-    rhs = Expr('app', head.index, tuple(rhs_args), head.sort)
-    return lhs, rhs
+def sym(eq: Eq) -> Eq:
+    """Symmetry."""
+
+    return Eq(eq.rhs, eq.lhs, eq.sort)
 
 
-def unfold(term: Term, args: Iterable[Expr]) -> tuple[Expr, Expr]:
-    if term.def_body is None:
-        raise ValueError('term has no definition to unfold')
-    subst = {i: a for i, a in enumerate(args)}
-    body = _instantiate(term.def_body, subst)
-    lhs = Expr('app', term_index(term), tuple(args), term.ret)
-    return lhs, body
+def trans(p: Eq, q: Eq) -> Eq:
+    """Transitivity.``p.rhs`` must equal ``q.lhs``."""
+
+    if p.rhs != q.lhs:
+        raise ValueError("trans mismatch")
+    return Eq(p.lhs, q.rhs, p.sort)
 
 
-def _instantiate(expr: Expr, subst: dict[int, Expr]) -> Expr:
-    if expr.kind in ('var', 'dummy'):
+def cong(term: int, sort: int, eqs: Iterable[Eq]) -> Eq:
+    """Congruence for an application of ``term``."""
+
+    lhs_args = [e.lhs for e in eqs]
+    rhs_args = [e.rhs for e in eqs]
+    lhs = Expr("app", term, tuple(lhs_args), sort)
+    rhs = Expr("app", term, tuple(rhs_args), sort)
+    return Eq(lhs, rhs, sort)
+
+
+def unfold(term: int, sort: int, body: Expr, args: Iterable[Expr]) -> Eq:
+    """Unfold a definition using the stored body."""
+
+    subst: Dict[int, Expr] = {i: a for i, a in enumerate(args)}
+    rhs = _instantiate(body, subst)
+    lhs = Expr("app", term, tuple(args), sort)
+    return Eq(lhs, rhs, sort)
+
+
+def _instantiate(expr: Expr, subst: Dict[int, Expr]) -> Expr:
+    if expr.kind in ("var", "dummy"):
         return subst.get(expr.index, expr)
-    return Expr('app', expr.index,
-                tuple(_instantiate(a, subst) for a in expr.args),
-                expr.sort)
+    return Expr(
+        "app",
+        expr.index,
+        tuple(_instantiate(a, subst) for a in expr.args),
+        expr.sort,
+    )
 
-
-def term_index(term: Term) -> int:
-    raise NotImplementedError

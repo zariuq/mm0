@@ -1,102 +1,134 @@
-"""Minimal proof VM enforcing stack discipline and a small saved heap.
-
-This VM is purposely lightweight; it checks stack effects for TERM/THM/HYP/
-DUMMY/REF/SAVE and provides stubs for basic convertibility commands. Commands
-that are not yet implemented raise ``VMError`` so tests can assert failure.
-"""
+"""Proof VM with basic convertibility handling."""
 from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List
 
 from .ast import Expr
 from .cmd import ProofOp, Cmd
+from .kernel import Eq, refl, sym as ksym, trans as ktrans, cong as kcong, unfold as kunfold
 
 
 class VMError(Exception):
     """Raised when the proof VM encounters a structural error."""
 
 
-class Equality:
-    """Simple equality pair used for convertibility goals."""
+@dataclass
+class SavedTerm:
+    expr: Expr
 
-    __slots__ = ("lhs", "rhs", "sort")
 
-    def __init__(self, lhs: Expr, rhs: Expr, sort: int):
-        self.lhs, self.rhs, self.sort = lhs, rhs, sort
+@dataclass
+class SavedEq:
+    eq: Eq
+
+
+Saved = SavedTerm | SavedEq
 
 
 class ProofVM:
-    """Very small interpreter tracking stack depth and saved terms."""
+    """Interpreter for proof commands enforcing stack and convertibility rules."""
 
     def __init__(self, sym):
         self.sym = sym
-        self.stack: list[Expr] = []
-        self.saved: list[Expr] = []
-        self.conv: list[Equality] = []
+        self.tstack: List[Expr] = []
+        self.cstack: List[Eq] = []
+        self.saved: List[Saved] = []
+        self.goal: Eq | None = None
 
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
     def step(self, c: Cmd) -> None:
         op, k = c.op, c.data
         if op in (ProofOp.TERM, ProofOp.TERM_SAVE):
             n = self.sym.term_arity[k]
-            args = self._pop(n)
+            args = self._pop_terms(n)
             e = Expr("app", k, tuple(args), 0)
-            self._push(e)
+            self.tstack.append(e)
             if op == ProofOp.TERM_SAVE:
-                self.saved.append(e)
+                self.saved.append(SavedTerm(e))
         elif op in (ProofOp.THM, ProofOp.THM_SAVE):
             n = self.sym.thm_arity[k]
-            args = self._pop(n)
+            args = self._pop_terms(n)
             e = Expr("app", k, tuple(args), 0)
-            self._push(e)
+            self.tstack.append(e)
             if op == ProofOp.THM_SAVE:
-                self.saved.append(e)
+                self.saved.append(SavedTerm(e))
         elif op == ProofOp.REF:
             try:
-                self._push(self.saved[k])
+                s = self.saved[k]
             except IndexError as exc:  # pragma: no cover - tested
                 raise VMError("ref oob") from exc
+            if isinstance(s, SavedTerm):
+                self.tstack.append(s.expr)
+            else:
+                self.cstack.append(s.eq)
         elif op in (ProofOp.HYP, ProofOp.DUMMY):
-            self._push(Expr("var", -1, (), 0))
+            self.tstack.append(Expr("var", -1, (), 0))
         elif op == ProofOp.SAVE:
-            if not self.stack:
+            if not self.tstack:
                 raise VMError("dup on empty stack")
-            self.saved.append(self.stack[-1])
+            top = self.tstack[-1]
+            self.saved.append(SavedTerm(top))
         elif op == ProofOp.REFL:
-            e = self._pop1()
-            self.conv.append(Equality(e, e, e.sort))
+            e = self._pop_term()
+            self.cstack.append(refl(e))
         elif op == ProofOp.SYM:
-            eq = self._conv_pop()
-            self.conv.append(Equality(eq.rhs, eq.lhs, eq.sort))
+            self.cstack.append(ksym(self._pop_eq()))
         elif op == ProofOp.CONG:
-            raise VMError("CONG not implemented")
+            n = self.sym.term_arity[k]
+            eqs = self._pop_eqs(n)
+            self.cstack.append(kcong(k, 0, eqs))
         elif op == ProofOp.UNFOLD:
-            raise VMError("UNFOLD not implemented")
+            n = self.sym.term_arity[k]
+            args = self._pop_terms(n)
+            body = self.sym.term_defs[k]
+            if body is None:
+                raise VMError("UNFOLD on non-def")
+            self.cstack.append(kunfold(k, 0, body, args))
         elif op == ProofOp.CONV_SAVE:
-            eq = self._conv_pop()
-            self.saved.append(Expr("app", -2, (), eq.sort))
+            self.saved.append(SavedEq(self._pop_eq()))
         elif op == ProofOp.CONV_CUT:
-            raise VMError("CONV_CUT not implemented")
+            p2 = self._pop_eq()
+            p1 = self._pop_eq()
+            self.cstack.append(ktrans(p1, p2))
         elif op == ProofOp.CONV:
-            raise VMError("CONV not implemented")
+            eq = self._pop_eq()
+            if self.goal is None:
+                self.goal = eq
+            else:
+                self.goal = ktrans(self.goal, eq)
         elif op == ProofOp.END:
             return
         else:  # pragma: no cover - defensive
             raise VMError(f"unsupported opcode {int(op):#x}")
 
-    # ------------------------------------------------------------------
-    def _pop(self, n: int) -> list[Expr]:
-        if n > len(self.stack):
+    # ---------------------------------------------------------------
+    def finish(self, require_goal: bool = True) -> None:
+        if self.cstack:
+            raise VMError("pending conv goals")
+        if require_goal and (self.goal is None or self.goal.lhs != self.goal.rhs):
+            raise VMError("goal not discharged")
+
+    # Helpers -------------------------------------------------------
+    def _pop_terms(self, n: int) -> List[Expr]:
+        if n > len(self.tstack):
             raise VMError("stack underflow")
-        res = self.stack[-n:]
-        del self.stack[-n:]
+        res = self.tstack[-n:]
+        del self.tstack[-n:]
         return res
 
-    def _pop1(self) -> Expr:
-        return self._pop(1)[0]
+    def _pop_term(self) -> Expr:
+        return self._pop_terms(1)[0]
 
-    def _push(self, e: Expr) -> None:
-        self.stack.append(e)
-
-    def _conv_pop(self) -> Equality:
-        if not self.conv:
+    def _pop_eq(self) -> Eq:
+        if not self.cstack:
             raise VMError("no conv goal")
-        return self.conv.pop()
+        return self.cstack.pop()
+
+    def _pop_eqs(self, n: int) -> List[Eq]:
+        if n > len(self.cstack):
+            raise VMError("no conv goal")
+        res = self.cstack[-n:]
+        del self.cstack[-n:]
+        return res
+
