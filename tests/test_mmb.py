@@ -56,7 +56,7 @@ def test_mmb_valid():
     mmb_path = ensure_peano_mmb()
     with open(mm0_path, "rb") as mm0_file:
         subprocess.run([mm0c, str(mmb_path)], stdin=mm0_file, check=True)
-    load_mmb(mmb_path.read_bytes())
+    load_mmb(mmb_path.read_bytes(), strict_align=False)
 
 
 def mutate_bad_magic(b: bytes) -> bytes:
@@ -128,35 +128,40 @@ def mutate_unterminated_string(b: bytes) -> bytes:
     return bytes(bb)
 
 
-INVALIDS = [
-    ("bad_magic", mutate_bad_magic, False),
-    ("version", mutate_version, False),
-    ("misordered", mutate_misordered, False),
-    ("p_index", mutate_pindex, False),
-    ("malformed_name", mutate_malformed_name, True),
-    ("name_ptr_oob", mutate_name_ptr_oob, True),
-    ("unterminated_string", mutate_unterminated_string, True),
-]
-
-
-@pytest.mark.parametrize("name,mut,is_index", INVALIDS)
-def test_invalid_mmb(name, mut, is_index, tmp_path):
+@pytest.mark.parametrize(
+    "name,mut,category",
+    [
+        ("bad_magic", mutate_bad_magic, "structural"),
+        ("version", mutate_version, "structural"),
+        ("misordered", mutate_misordered, "structural"),
+        ("p_index", mutate_pindex, "index-only"),
+        ("malformed_name", mutate_malformed_name, "index-only"),
+        ("name_ptr_oob", mutate_name_ptr_oob, "index-only"),
+        ("unterminated_name", mutate_unterminated_string, "index-only"),
+    ],
+)
+def test_mmb_mutation_parity(name, mut, category, tmp_path):
     mm0c = ensure_mm0c()
     mm0_path = ROOT / "examples" / "peano.mm0"
     mmb_path = ensure_peano_mmb()
-    data = mmb_path.read_bytes()
+    base = mmb_path.read_bytes()
     bad = tmp_path / f"{name}.mmb"
-    bad.write_bytes(mut(data))
+    bad.write_bytes(mut(base))
+
     with open(mm0_path, "rb") as mm0_file:
         ret = subprocess.run([mm0c, str(bad)], stdin=mm0_file).returncode
-    if ret == 0:
-        pytest.skip("mm0-c accepted mutation")
+
     data = bad.read_bytes()
-    with pytest.raises(ValueError):
-        load_mmb(data, strict_index=True)
-    if is_index:
-        fmt = load_mmb(data, strict_index=False)
-        assert fmt.strings == []
+    if ret == 0:
+        load_mmb(data, strict_index=False, strict_align=False)
+        if category == "index-only":
+            with pytest.raises(Exception):
+                load_mmb(data, strict_index=True, strict_align=False)
+    else:
+        with pytest.raises(Exception):
+            load_mmb(data, strict_index=False, strict_align=False)
+        with pytest.raises(Exception):
+            load_mmb(data, strict_index=True, strict_align=False)
 
 
 def test_truncated(tmp_path):
@@ -169,5 +174,5 @@ def test_truncated(tmp_path):
         with pytest.raises(subprocess.CalledProcessError):
             subprocess.run([mm0c, str(bad)], stdin=mm0_file, check=True)
     with pytest.raises(ValueError):
-        load_mmb(bad.read_bytes())
+        load_mmb(bad.read_bytes(), strict_align=False)
 

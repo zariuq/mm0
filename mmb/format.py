@@ -74,7 +74,12 @@ def _cstr(data: bytes, off: int) -> str:
     return data[off:end].decode("utf-8")
 
 
-def load_mmb(data: bytes, *, strict_index: bool = False) -> MMBFile:
+def load_mmb(
+    data: bytes,
+    *,
+    strict_index: bool = False,
+    strict_align: bool = True,
+) -> MMBFile:
     """Parse header, index and declaration tables.
 
     Mirrors `mm0-rs/src/mmb/import.rs` structure loader.
@@ -104,10 +109,16 @@ def load_mmb(data: bytes, *, strict_index: bool = False) -> MMBFile:
     base = 40 + num_sorts
     if not (base <= p_terms <= p_thms <= p_proof <= n):
         raise ValueError("section offsets out of range")
+    align = 8 if strict_align else 4
     for ptr in (p_terms, p_thms, p_proof):
-        check_ptr(ptr, 4, 0, n)
+        check_ptr(ptr, align, 0, n)
     if p_index:
-        check_ptr(p_index, 8, 0, n)
+        try:
+            check_ptr(p_index, 8, 0, n)
+        except ValueError:
+            if strict_index:
+                raise
+            p_index = 0
 
     terms: list[TermEntry] = []
     if num_terms:
@@ -195,6 +206,23 @@ def read_thm_params(m: MMBFile, th: ThmEntry) -> list[TypeInfo]:
 
 
 @dataclass
+class SymbolTable:
+    """Arity metadata for term and theorem references."""
+
+    term_arity: list[int]
+    thm_arity: list[int]
+
+
+def build_symbols(m: MMBFile) -> SymbolTable:
+    """Build a symbol table capturing term/theorem arities."""
+
+    return SymbolTable(
+        term_arity=[te.num_args for te in m.terms],
+        thm_arity=[th.num_args for th in m.thms],
+    )
+
+
+@dataclass
 class UnifyProg:
     start: int
     end: int
@@ -255,6 +283,8 @@ class StmtReader:
             return None
         proof_start = self.r.i
         stmt_end = off_rel + c.data
+        if stmt_end > self.r.n:
+            raise ValueError("statement payload out of bounds")
         proof = None
         if proof_start < stmt_end:
             proof = self.r.b[proof_start:stmt_end]
@@ -276,4 +306,22 @@ class ProofReader:
             if c.op == ProofOp.END:
                 break
             yield c
+
+
+def run_proof_payload(sym: SymbolTable, buf: memoryview) -> None:
+    """Execute a proof payload with basic stack discipline checks."""
+
+    from .cmd import read_cmd, ProofOp
+    from .vm import ProofVM, VMError
+
+    vm = ProofVM(sym)
+    r = BR(buf)
+    try:
+        while True:
+            c = read_cmd(r)
+            if c.op == ProofOp.END:
+                break
+            vm.step(c)
+    except Exception as e:
+        raise VMError(f"proof decode/stack error at +{r.i}: {e}")
 

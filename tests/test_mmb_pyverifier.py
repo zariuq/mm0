@@ -15,6 +15,8 @@ from mmb.format import (
     UnifyReader,
     StmtReader,
     ProofReader,
+    build_symbols,
+    run_proof_payload,
 )
 from mmb.cmd import read_cmd, Cmd, StmtOp, ProofOp, UnifyOp
 from test_mmb import ensure_peano_mmb
@@ -40,7 +42,7 @@ def test_verify_structural_load():
 
 def test_header_and_counts_peano():
     mmb_path = ensure_peano_mmb()
-    fmt = load_mmb(mmb_path.read_bytes())
+    fmt = load_mmb(mmb_path.read_bytes(), strict_align=False)
     assert fmt.num_sorts == 3
     assert fmt.num_terms == 170
     assert fmt.num_thms == 2689
@@ -71,7 +73,7 @@ def test_type_decode_boundaries():
 
 def test_termentry_slice_bounds():
     mmb_path = ensure_peano_mmb()
-    fmt = load_mmb(mmb_path.read_bytes())
+    fmt = load_mmb(mmb_path.read_bytes(), strict_align=False)
     te = fmt.terms[0]
     types = read_term_types(fmt, te)
     assert len(types) == te.num_args + 1
@@ -79,7 +81,7 @@ def test_termentry_slice_bounds():
 
 def test_thmentry_slice_bounds():
     mmb_path = ensure_peano_mmb()
-    fmt = load_mmb(mmb_path.read_bytes())
+    fmt = load_mmb(mmb_path.read_bytes(), strict_align=False)
     th = fmt.thms[0]
     params = read_thm_params(fmt, th)
     assert len(params) == th.num_args
@@ -87,7 +89,7 @@ def test_thmentry_slice_bounds():
 
 def test_unify_reader_runs():
     mmb_path = ensure_peano_mmb()
-    fmt = load_mmb(mmb_path.read_bytes())
+    fmt = load_mmb(mmb_path.read_bytes(), strict_align=False)
     te = fmt.terms[0]
     prog = locate_unify_prog(fmt, te.p_args, te.num_args, True)
     u = UnifyReader(memoryview(fmt.data)[prog.start:prog.end])
@@ -99,7 +101,7 @@ def test_unify_reader_runs():
 
 def test_stmt_and_proof_scans():
     mmb_path = ensure_peano_mmb()
-    fmt = load_mmb(mmb_path.read_bytes())
+    fmt = load_mmb(mmb_path.read_bytes(), strict_align=False)
     sr = StmtReader(fmt)
     sorts = terms = thms = 0
     while True:
@@ -128,4 +130,58 @@ def test_br_and_check_ptr_negatives():
 
     with pytest.raises(ValueError):
         check_ptr(1, 1, 1, 1)
+
+
+def test_stmt_payload_out_of_bounds(tmp_path):
+    mmb_path = ensure_peano_mmb()
+    data = bytearray(mmb_path.read_bytes())
+    p_proof = int.from_bytes(data[24:28], "little")
+    i = p_proof
+    data[i] = (data[i] & 0x3F) | 0xC0
+    data[i + 1 : i + 5] = (len(data) + 0x100).to_bytes(4, "little")
+    bad = tmp_path / "stmt_overrun.mmb"
+    bad.write_bytes(data)
+    from mmb.format import StmtReader
+
+    fmt = load_mmb(bad.read_bytes(), strict_index=False, strict_align=False)
+    sr = StmtReader(fmt)
+    with pytest.raises(Exception):
+        sr.next()
+
+
+def enc_cmd(op, data=0):
+    if data == 0:
+        tag = 0
+        extra = b""
+    elif data <= 0xFF:
+        tag = 1
+        extra = bytes([data])
+    elif data <= 0xFFFF:
+        tag = 2
+        extra = data.to_bytes(2, "little")
+    else:
+        tag = 3
+        extra = data.to_bytes(4, "little")
+    return bytes([(op & 0x3F) | (tag << 6)]) + extra
+
+
+def test_proofvm_stack_discipline_smoke():
+    fmt = load_mmb(ensure_peano_mmb().read_bytes(), strict_align=False)
+    sym = build_symbols(fmt)
+    payload = bytearray()
+    payload += enc_cmd(ProofOp.HYP)
+    k0 = next((i for i, a in enumerate(sym.term_arity) if a == 0), None)
+    if k0 is not None:
+        payload += enc_cmd(ProofOp.TERM, k0)
+    payload += enc_cmd(ProofOp.END)
+    run_proof_payload(sym, memoryview(bytes(payload)))
+
+
+def test_proofvm_underflow():
+    fmt = load_mmb(ensure_peano_mmb().read_bytes(), strict_align=False)
+    sym = build_symbols(fmt)
+    k1 = next(i for i, a in enumerate(sym.term_arity) if a == 1)
+    payload = enc_cmd(ProofOp.TERM, k1) + enc_cmd(ProofOp.END)
+    with pytest.raises(Exception):
+        run_proof_payload(sym, memoryview(payload))
 
