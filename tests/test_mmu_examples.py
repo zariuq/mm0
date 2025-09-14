@@ -22,6 +22,7 @@ def run_mm0_hs(mm0_file, mmu_file, expect_fail=False):
 CASES = [
     ("examples/hello.mmu", False),
     ("examples/set11k.mmu", False),
+    ("examples/peano.mmu", False),
     ("tests/mm0_mmu/good.mmu", False),
     ("tests/mm0_mmu/bad.mmu", True),
     ("tests/mm0_mmu/unknown.mmu", True),
