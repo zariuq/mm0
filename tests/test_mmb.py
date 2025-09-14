@@ -129,18 +129,18 @@ def mutate_unterminated_string(b: bytes) -> bytes:
 
 
 INVALIDS = [
-    ("bad_magic", mutate_bad_magic),
-    ("version", mutate_version),
-    ("misordered", mutate_misordered),
-    ("p_index", mutate_pindex),
-    ("malformed_name", mutate_malformed_name),
-    ("name_ptr_oob", mutate_name_ptr_oob),
-    ("unterminated_string", mutate_unterminated_string),
+    ("bad_magic", mutate_bad_magic, False),
+    ("version", mutate_version, False),
+    ("misordered", mutate_misordered, False),
+    ("p_index", mutate_pindex, False),
+    ("malformed_name", mutate_malformed_name, True),
+    ("name_ptr_oob", mutate_name_ptr_oob, True),
+    ("unterminated_string", mutate_unterminated_string, True),
 ]
 
 
-@pytest.mark.parametrize("name,mut", INVALIDS)
-def test_invalid_mmb(name, mut, tmp_path):
+@pytest.mark.parametrize("name,mut,is_index", INVALIDS)
+def test_invalid_mmb(name, mut, is_index, tmp_path):
     mm0c = ensure_mm0c()
     mm0_path = ROOT / "examples" / "peano.mm0"
     mmb_path = ensure_peano_mmb()
@@ -151,8 +151,12 @@ def test_invalid_mmb(name, mut, tmp_path):
         ret = subprocess.run([mm0c, str(bad)], stdin=mm0_file).returncode
     if ret == 0:
         pytest.skip("mm0-c accepted mutation")
+    data = bad.read_bytes()
     with pytest.raises(ValueError):
-        load_mmb(bad.read_bytes())
+        load_mmb(data, strict_index=True)
+    if is_index:
+        fmt = load_mmb(data, strict_index=False)
+        assert fmt.strings == []
 
 
 def test_truncated(tmp_path):

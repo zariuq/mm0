@@ -408,9 +408,9 @@ def verify_mmb(_mm0_path: str, mmb_path: str):
 
     This lightweight parser reads the header and table pointers of the
     binary proof file and ensures that all referenced regions are within
-    the file bounds. It does **not** attempt full proof checking but
-    provides a minimal sanity check without relying on `mm0-c`.
-    """
+    the file bounds. It does **not** invoke `mm0-c` or attempt full proof
+    checking; test suites compare its behavior against the reference
+    verifier separately."""
     import struct
 
     with open(mmb_path, 'rb') as f:
