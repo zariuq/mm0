@@ -19,6 +19,7 @@ from mmb.format import (
     run_proof_payload,
 )
 from mmb.cmd import read_cmd, Cmd, StmtOp, ProofOp, UnifyOp
+from mmb.unify import run_unify
 from test_mmb import ensure_peano_mmb
 
 
@@ -97,6 +98,24 @@ def test_unify_reader_runs():
     with pytest.raises(ValueError):
         u_bad = UnifyReader(memoryview(b"\x45"))
         list(u_bad.iter_cmds())
+
+
+def test_unify_vm_basic():
+    # HYP, DUMMY 0, TERM_SAVE 0 (arity 2), REF 0, END
+    buf = bytearray()
+    buf += enc_cmd(UnifyOp.HYP)
+    buf += enc_cmd(UnifyOp.DUMMY, 0)
+    buf += enc_cmd(UnifyOp.TERM_SAVE, 0)
+    buf += enc_cmd(UnifyOp.REF, 0)
+    buf += enc_cmd(UnifyOp.END)
+    res = run_unify(memoryview(bytes(buf)), lambda _: 2, outputs=1)
+    assert len(res) == 1
+
+
+def test_unify_vm_ref_oob():
+    buf = enc_cmd(UnifyOp.REF, 0) + enc_cmd(UnifyOp.END)
+    with pytest.raises(ValueError):
+        run_unify(memoryview(buf), lambda _: 0, outputs=0)
 
 
 def test_stmt_and_proof_scans():
@@ -182,6 +201,43 @@ def test_proofvm_underflow():
     sym = build_symbols(fmt)
     k1 = next(i for i, a in enumerate(sym.term_arity) if a == 1)
     payload = enc_cmd(ProofOp.TERM, k1) + enc_cmd(ProofOp.END)
+    with pytest.raises(Exception):
+        run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_ref_heap():
+    fmt = load_mmb(ensure_peano_mmb().read_bytes(), strict_align=False)
+    sym = build_symbols(fmt)
+    payload = enc_cmd(ProofOp.HYP) + enc_cmd(ProofOp.SAVE) + enc_cmd(ProofOp.REF, 0) + enc_cmd(ProofOp.END)
+    run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_ref_oob():
+    fmt = load_mmb(ensure_peano_mmb().read_bytes(), strict_align=False)
+    sym = build_symbols(fmt)
+    payload = enc_cmd(ProofOp.REF, 0) + enc_cmd(ProofOp.END)
+    with pytest.raises(Exception):
+        run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_term_thm_save_ref():
+    fmt = load_mmb(ensure_peano_mmb().read_bytes(), strict_align=False)
+    sym = build_symbols(fmt)
+    k0 = next((i for i, a in enumerate(sym.term_arity) if a == 0), None)
+    t0 = next((i for i, a in enumerate(sym.thm_arity) if a == 0), None)
+    payload = bytearray()
+    if k0 is not None:
+        payload += enc_cmd(ProofOp.TERM_SAVE, k0)
+    if t0 is not None:
+        payload += enc_cmd(ProofOp.THM_SAVE, t0)
+    payload += enc_cmd(ProofOp.REF, 0) + enc_cmd(ProofOp.END)
+    run_proof_payload(sym, memoryview(bytes(payload)))
+
+
+def test_proofvm_cong_unimplemented():
+    fmt = load_mmb(ensure_peano_mmb().read_bytes(), strict_align=False)
+    sym = build_symbols(fmt)
+    payload = enc_cmd(ProofOp.CONG) + enc_cmd(ProofOp.END)
     with pytest.raises(Exception):
         run_proof_payload(sym, memoryview(payload))
 
