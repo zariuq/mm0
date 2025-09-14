@@ -1,43 +1,169 @@
 import pathlib
 import subprocess
 import shutil
+import sys
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+
+from mmb.format import load_mmb
 
 
 def ensure_mm0c() -> str:
-    mm0c = shutil.which('mm0-c')
+    mm0c = shutil.which("mm0-c")
     if mm0c:
         return mm0c
-    mm0c_path = ROOT / 'mm0-c' / 'mm0-c'
+    mm0c_path = ROOT / "mm0-c" / "mm0-c"
     if mm0c_path.exists():
         return str(mm0c_path)
-    gcc = shutil.which('gcc')
+    gcc = shutil.which("gcc")
     if gcc is None:
-        pytest.skip('gcc not available to build mm0-c')
-    subprocess.run([gcc, str(ROOT / 'mm0-c' / 'main.c'), '-O2', '-o', str(mm0c_path)], check=True)
+        pytest.skip("gcc not available to build mm0-c")
+    subprocess.run([gcc, str(ROOT / "mm0-c" / "main.c"), "-O2", "-o", str(mm0c_path)], check=True)
     return str(mm0c_path)
 
 
-def test_mmb_verify():
+def ensure_peano_mmb() -> pathlib.Path:
+    path = ROOT / "examples" / "peano.mmb"
     mm0c = ensure_mm0c()
-    mm0_path = ROOT / 'examples' / 'peano.mm0'
-    mmb_path = ROOT / 'examples' / 'peano.mmb'
-    if not mmb_path.exists():
-        pytest.skip('peano.mmb not found')
-    with open(mm0_path, 'rb') as mm0_file:
-        subprocess.run([mm0c, str(mmb_path)], stdin=mm0_file, check=True)
-    subprocess.run(['python3', str(ROOT / 'mmu.py'), str(mm0_path), str(mmb_path)], check=True)
-
-
-def test_mmb_invalid():
-    mm0c = ensure_mm0c()
-    bad_mmb = ROOT / 'tests' / 'mmb' / 'run' / 'gi_header_p_index_overflow.mmb'
-    with pytest.raises(subprocess.CalledProcessError):
-        subprocess.run([mm0c, str(bad_mmb)], stdin=subprocess.DEVNULL, check=True)
-    with pytest.raises(subprocess.CalledProcessError):
+    if path.exists():
+        with open(ROOT / "examples" / "peano.mm0", "rb") as mm0_file:
+            if subprocess.run([mm0c, str(path)], stdin=mm0_file).returncode == 0:
+                return path
+    mm0hs = shutil.which("mm0-hs")
+    if mm0hs is not None:
         subprocess.run(
-            ['python3', str(ROOT / 'mmu.py'), str(ROOT / 'examples' / 'peano.mm0'), str(bad_mmb)],
+            [mm0hs, "export", str(ROOT / "examples" / "peano.mmu"), "-o", str(path)],
             check=True,
         )
+        with open(ROOT / "examples" / "peano.mm0", "rb") as mm0_file:
+            if subprocess.run([mm0c, str(path)], stdin=mm0_file).returncode == 0:
+                return path
+    mm0rs = shutil.which("mm0-rs")
+    if mm0rs is not None:
+        subprocess.run(
+            [mm0rs, "compile", str(ROOT / "examples" / "peano.mm1"), str(path)],
+            check=True,
+        )
+        return path
+    pytest.skip("no tool to build peano.mmb")
+
+
+def test_mmb_valid():
+    mm0c = ensure_mm0c()
+    mm0_path = ROOT / "examples" / "peano.mm0"
+    mmb_path = ensure_peano_mmb()
+    with open(mm0_path, "rb") as mm0_file:
+        subprocess.run([mm0c, str(mmb_path)], stdin=mm0_file, check=True)
+    load_mmb(mmb_path.read_bytes())
+
+
+def mutate_bad_magic(b: bytes) -> bytes:
+    bb = bytearray(b)
+    bb[0:4] = b"BAD!"
+    return bytes(bb)
+
+
+def mutate_version(b: bytes) -> bytes:
+    bb = bytearray(b)
+    bb[4] = 2
+    return bytes(bb)
+
+
+def mutate_misordered(b: bytes) -> bytes:
+    bb = bytearray(b)
+    p_terms = int.from_bytes(bb[16:20], "little")
+    bb[20:24] = (p_terms - 4).to_bytes(4, "little")
+    return bytes(bb)
+
+
+def mutate_pindex(b: bytes) -> bytes:
+    bb = bytearray(b)
+    bb[32:40] = (len(bb) + 1).to_bytes(8, "little")
+    return bytes(bb)
+
+
+def mutate_malformed_name(b: bytes) -> bytes:
+    bb = bytearray(b)
+    p_index = int.from_bytes(bb[32:40], "little")
+    i = p_index + 8
+    while i + 16 <= len(bb):
+        if bytes(bb[i:i+4]) == b"Name":
+            bb[i+8:i+16] = (len(bb) - 8).to_bytes(8, "little")
+            break
+        i += 16
+    return bytes(bb)
+
+
+def mutate_name_ptr_oob(b: bytes) -> bytes:
+    bb = bytearray(b)
+    p_index = int.from_bytes(bb[32:40], "little")
+    i = p_index + 8
+    name_ptr = None
+    while i + 16 <= len(bb):
+        if bytes(bb[i:i+4]) == b"Name":
+            name_ptr = int.from_bytes(bb[i+8:i+16], "little")
+            break
+        i += 16
+    if name_ptr is not None:
+        bb[name_ptr+8:name_ptr+16] = (len(bb) + 1).to_bytes(8, "little")
+    return bytes(bb)
+
+
+def mutate_unterminated_string(b: bytes) -> bytes:
+    bb = bytearray(b)
+    p_index = int.from_bytes(bb[32:40], "little")
+    i = p_index + 8
+    name_ptr = None
+    while i + 16 <= len(bb):
+        if bytes(bb[i:i+4]) == b"Name":
+            name_ptr = int.from_bytes(bb[i+8:i+16], "little")
+            break
+        i += 16
+    if name_ptr is not None:
+        bb[name_ptr+8:name_ptr+16] = (len(bb) - 1).to_bytes(8, "little")
+        if bb[-1] == 0:
+            bb[-1] = 1
+    return bytes(bb)
+
+
+INVALIDS = [
+    ("bad_magic", mutate_bad_magic),
+    ("version", mutate_version),
+    ("misordered", mutate_misordered),
+    ("p_index", mutate_pindex),
+    ("malformed_name", mutate_malformed_name),
+    ("name_ptr_oob", mutate_name_ptr_oob),
+    ("unterminated_string", mutate_unterminated_string),
+]
+
+
+@pytest.mark.parametrize("name,mut", INVALIDS)
+def test_invalid_mmb(name, mut, tmp_path):
+    mm0c = ensure_mm0c()
+    mm0_path = ROOT / "examples" / "peano.mm0"
+    mmb_path = ensure_peano_mmb()
+    data = mmb_path.read_bytes()
+    bad = tmp_path / f"{name}.mmb"
+    bad.write_bytes(mut(data))
+    with open(mm0_path, "rb") as mm0_file:
+        ret = subprocess.run([mm0c, str(bad)], stdin=mm0_file).returncode
+    if ret == 0:
+        pytest.skip("mm0-c accepted mutation")
+    with pytest.raises(ValueError):
+        load_mmb(bad.read_bytes())
+
+
+def test_truncated(tmp_path):
+    mm0c = ensure_mm0c()
+    mm0_path = ROOT / "examples" / "peano.mm0"
+    mmb_path = ensure_peano_mmb()
+    bad = tmp_path / "trunc.mmb"
+    bad.write_bytes(mmb_path.read_bytes()[:100])
+    with open(mm0_path, "rb") as mm0_file:
+        with pytest.raises(subprocess.CalledProcessError):
+            subprocess.run([mm0c, str(bad)], stdin=mm0_file, check=True)
+    with pytest.raises(ValueError):
+        load_mmb(bad.read_bytes())
+

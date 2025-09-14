@@ -23,6 +23,13 @@ class BR:
     def u8(self) -> int:
         return int(self.take(1)[0])
 
+    def u16(self) -> int:
+        """Read a little-endian 16-bit unsigned integer."""
+        import struct
+
+        (x,) = struct.unpack_from("<H", self.take(2))
+        return x
+
     def u32(self) -> int:
         import struct
 
@@ -47,5 +54,11 @@ class BR:
             shift += 7
             if shift > 63:
                 raise ValueError("varu overflow")
+
+
+def check_ptr(off: int, align: int, n: int, total: int) -> None:
+    """Validate that `off`..`off+n` lies within `total` and is `align` aligned."""
+    if off % align or off < 0 or off + n > total:
+        raise ValueError("pointer out of range")
 
 
