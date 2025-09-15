@@ -317,22 +317,31 @@ def run_proof_payload(
     *,
     goal: "Eq" | None = None,
     require_goal: bool = True,
+    term_defs: list[Expr | None] | None = None,
 ) -> None:
-    """Execute a proof payload with convertibility checks and an optional goal."""
+    """Execute a proof payload with convertibility checks.
+
+    ``goal`` sets an explicit convertibility target; ``require_goal``
+    enforces that it is discharged at the end. ``term_defs`` allows
+    callers to override the definition table used by the VM.
+    """
 
     from .cmd import read_cmd, ProofOp
     from .vm import ProofVM, VMError
 
+    if term_defs is None:
+        term_defs = sym.term_defs
     vm = ProofVM(sym)
     vm.goal = goal
+    vm.sym.term_defs = term_defs
     r = BR(buf)
     try:
         while True:
             c = read_cmd(r)
+            vm.step(c)
             if c.op == ProofOp.END:
                 break
-            vm.step(c)
         vm.finish(require_goal=require_goal)
-    except Exception as e:
-        raise VMError(f"proof decode/stack error at +{r.i}: {e}")
+    except Exception as e:  # pragma: no cover - keeps message precise
+        raise VMError(f"proof decode/stack error at +{r.i}: {e}") from e
 

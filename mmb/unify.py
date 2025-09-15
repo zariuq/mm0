@@ -72,15 +72,24 @@ class UnifyVM:
             raise ValueError(f"unsupported unify opcode {op:#x}")
 
 
-def run_unify(buf: memoryview, arity_of_term: Callable[[int], int], *, outputs: int) -> List[Expr]:
+def run_unify(
+    buf: memoryview,
+    arity_of_term: Callable[[int], int],
+    *,
+    outputs: int,
+    initial: List[Expr] | None = None,
+) -> List[Expr]:
     """Execute a unify program returning the top ``outputs`` expressions.
 
     ``arity_of_term`` supplies arities for TERM instructions. ``outputs`` is
     the number of expressions expected on the stack at the end (hyps then
-    concl). Raises ``ValueError`` on stack underflow or malformed streams.
+    concl). ``initial`` seeds the VM stack before execution. Raises
+    ``ValueError`` on stack underflow or malformed streams.
     """
 
     vm = UnifyVM(arity_of_term)
+    if initial:
+        vm.stack.extend(initial)
     r = BR(buf)
     while True:
         c = read_cmd(r)

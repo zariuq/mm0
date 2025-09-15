@@ -1,0 +1,9 @@
+delimiter $ ( ) $;
+strict provable sort wff;
+term im (p: wff, q: wff): wff;
+term not (p: wff): wff;
+axiom ax_1 (a: wff, b: wff): $ im a (im b a) $;
+axiom ax_2 (a: wff, b: wff, c: wff): $ im (im a (im b c)) (im (im a b) (im a c)) $;
+axiom ax_3 (a: wff, b: wff): $ im (im (not a) (not b)) (im b a) $;
+axiom ax_mp (a: wff, b: wff) (h1: $ a $) (h2: $ im a b $): $ b $;
+theorem bad_dummy_escape (a: wff): $ im (not (im a a)) (not (im a a)) $;

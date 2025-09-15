@@ -30,6 +30,9 @@ CASES = [
     ("tests/mm0_mmu/conv.mmu", False),
     ("tests/mm0_mmu/bad_unfold.mmu", True),
     ("tests/mm0_mmu/bad_refl.mmu", True),
+    ("tests/mm0_mmu/bad_dummy_escape.mmu", True),
+    ("tests/mm0_mmu/bad_strict_dep_in_arg.mmu", True),
+    ("tests/mm0_mmu/bad_cong_mismatch.mmu", True),
 ]
 
 

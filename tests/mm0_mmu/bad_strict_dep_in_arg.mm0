@@ -1,0 +1,5 @@
+delimiter $ ( ) $;
+strict provable sort wff;
+term im (p: wff, q: wff): wff;
+axiom ax_1 (a: wff, b: wff): $ im a (im b a) $;
+theorem bad_strict_arg (a: wff): $ im (im a c) (im a c) $;
