@@ -218,7 +218,7 @@ def test_proofvm_ref_oob():
     fmt = load_mmb(ensure_peano_mmb().read_bytes(), strict_align=False)
     sym = build_symbols(fmt)
     payload = enc_cmd(ProofOp.REF, 0) + enc_cmd(ProofOp.END)
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="ref oob"):
         run_proof_payload(sym, memoryview(payload))
 
 
@@ -334,4 +334,13 @@ def test_proofvm_conv_cut_mismatch():
     )
     with pytest.raises(Exception):
         run_proof_payload(sym, memoryview(payload))
+
+
+def test_proofvm_goal_mismatch():
+    sym = make_sym([])
+    payload = enc_cmd(ProofOp.HYP) + enc_cmd(ProofOp.REFL) + enc_cmd(ProofOp.CONV) + enc_cmd(ProofOp.END)
+    from mmb.kernel import Eq
+    bad_goal = Eq(Expr("var", 0, (), 0), Expr("var", 1, (), 0), 0)
+    with pytest.raises(Exception):
+        run_proof_payload(sym, memoryview(payload), goal=bad_goal)
 

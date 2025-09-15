@@ -311,13 +311,20 @@ class ProofReader:
             yield c
 
 
-def run_proof_payload(sym: SymbolTable, buf: memoryview, *, require_goal: bool = True) -> None:
-    """Execute a proof payload with convertibility checks."""
+def run_proof_payload(
+    sym: SymbolTable,
+    buf: memoryview,
+    *,
+    goal: "Eq" | None = None,
+    require_goal: bool = True,
+) -> None:
+    """Execute a proof payload with convertibility checks and an optional goal."""
 
     from .cmd import read_cmd, ProofOp
     from .vm import ProofVM, VMError
 
     vm = ProofVM(sym)
+    vm.goal = goal
     r = BR(buf)
     try:
         while True:
