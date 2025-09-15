@@ -1,0 +1,6 @@
+delimiter $ ( ) $;
+strict provable sort wff;
+term im (p: wff, q: wff): wff;
+axiom ax_1 (a: wff, b: wff): $ im a (im b a) $;
+local theorem refl_a (a: wff): $ im a a $;
+theorem bad_cong_mismatch (a: wff, b: wff): $ im a b $;

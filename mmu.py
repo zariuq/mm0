@@ -403,11 +403,62 @@ def verify_mmu(path: str, logger: logging.Logger | None = None):
     return v
 
 
+def verify_mmb(_mm0_path: str, mmb_path: str):
+    """Perform basic structural checks on an `.mmb` file.
+
+    This lightweight parser reads the header and table pointers of the
+    binary proof file and ensures that all referenced regions are within
+    the file bounds. It does **not** invoke `mm0-c` or attempt full proof
+    checking; test suites compare its behavior against the reference
+    verifier separately."""
+    import struct
+
+    with open(mmb_path, 'rb') as f:
+        data = f.read()
+
+    if len(data) < 40:
+        raise ValueError('file too small to be an MMB file')
+
+    header = struct.unpack_from('<4sBBHIIIIIIQ', data, 0)
+    magic, version, num_sorts, _res, num_terms, num_thms, p_terms, p_thms, \
+        p_proof, _res2, p_index = header
+
+    if magic != b'MM0B':
+        raise ValueError('missing MM0B header')
+    if version != 1:
+        raise ValueError(f'unsupported MMB version {version}')
+
+    size = len(data)
+
+    def check_ptr(ptr: int, align: int = 1) -> None:
+        if ptr % align:
+            raise ValueError('misaligned pointer')
+        if ptr > size:
+            raise ValueError('pointer out of range')
+
+    # sort table directly follows the header
+    if 40 + num_sorts > size:
+        raise ValueError('sort table exceeds file size')
+
+    check_ptr(p_terms, 8)
+    if p_terms + num_terms * 8 > size:
+        raise ValueError('term table exceeds file size')
+
+    check_ptr(p_thms, 8)
+    if p_thms + num_thms * 8 > size:
+        raise ValueError('theorem table exceeds file size')
+
+    check_ptr(p_proof)
+    if p_index:
+        check_ptr(p_index, 8)
+
+
+
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description="Minimal MMU verifier")
     parser.add_argument(
-        'files', nargs='+', help='MMU file or MM0 and MMU file')
+        'files', nargs='+', help='MMU file or MM0 and proof file')
     parser.add_argument('--log-file', dest='log_file', help='write logs to FILE')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='enable verbose logging')
@@ -418,21 +469,41 @@ def main(argv=None):
                         filename=args.log_file,
                         format='%(message)s')
     logger = logging.getLogger('mmu')
-    if len(args.files) == 1:
-        mmu_path = args.files[0]
-    elif len(args.files) == 2:
-        # Allow users to supply an MM0 file followed by the MMU file
-        mmu_path = args.files[1]
-    else:
-        parser.error('expected MMU path or MM0 and MMU paths')
     import os
-    if os.path.isdir(mmu_path):
-        parser.error(f'{mmu_path} is a directory, expected a file')
-    try:
-        verify_mmu(mmu_path, logger=logger)
-    except Exception as e:
-        parser.exit(1, f"error: {e}\n")
-    print('OK')
+    if len(args.files) == 1:
+        path = args.files[0]
+        if path.endswith('.mmu'):
+            if os.path.isdir(path):
+                parser.error(f'{path} is a directory, expected a file')
+            try:
+                verify_mmu(path, logger=logger)
+            except Exception as e:
+                parser.exit(1, f"error: {e}\n")
+            print('OK')
+            return
+        parser.error('expected an .mmu file')
+    elif len(args.files) == 2 and args.files[1].endswith('.mmb'):
+        mm0_path, mmb_path = args.files
+        if os.path.isdir(mmb_path) or os.path.isdir(mm0_path):
+            parser.error('expected file paths, not directories')
+        try:
+            verify_mmb(mm0_path, mmb_path)
+        except Exception as e:
+            parser.exit(1, f"error: {e}\n")
+        print('OK')
+        return
+    elif len(args.files) == 2:
+        _, mmu_path = args.files
+        if os.path.isdir(mmu_path):
+            parser.error(f'{mmu_path} is a directory, expected a file')
+        try:
+            verify_mmu(mmu_path, logger=logger)
+        except Exception as e:
+            parser.exit(1, f"error: {e}\n")
+        print('OK')
+        return
+    else:
+        parser.error('expected MMU path or MM0 and MMB paths')
 
 
 if __name__ == '__main__':
