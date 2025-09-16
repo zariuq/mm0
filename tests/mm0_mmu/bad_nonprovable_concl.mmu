@@ -1,0 +1,2 @@
+(sort foo)
+(pub theorem bad_nonprovable ((x foo ())) () x () x)

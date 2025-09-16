@@ -1,0 +1,5 @@
+delimiter $ ( ) $;
+sort nat;
+provable sort wff;
+term eq (a: nat) (b: nat): wff;
+theorem bad_dummy_hyp (a: nat) (h: $ eq a b $): $ eq a a $;

@@ -1,0 +1,4 @@
+(sort nat)
+(sort wff strict provable)
+(term eq ((a nat ()) (b nat ())) (wff ()))
+(pub theorem bad_dummy_hyp ((a nat ())) ((h (eq a b))) (eq a a) ((b nat)) h)

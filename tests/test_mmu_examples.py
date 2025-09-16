@@ -33,6 +33,9 @@ CASES = [
     ("tests/mm0_mmu/bad_dummy_escape.mmu", True),
     ("tests/mm0_mmu/bad_strict_dep_in_arg.mmu", True),
     ("tests/mm0_mmu/bad_cong_mismatch.mmu", True),
+    ("tests/mm0_mmu/bad_param_shadowing.mmu", True),
+    ("tests/mm0_mmu/bad_nonprovable_concl.mmu", True),
+    ("tests/mm0_mmu/bad_dummy_in_hyp.mmu", True),
 ]
 
 

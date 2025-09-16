@@ -1,0 +1,2 @@
+(sort wff provable)
+(pub theorem bad_shadow ((p wff ()) (p wff ())) () p () p)
