@@ -1,0 +1,3 @@
+delimiter $ ( ) $;
+sort foo;
+theorem bad_nonprovable (x: foo): x;
